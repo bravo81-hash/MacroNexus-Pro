@@ -18,9 +18,11 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #e0e0e0; }
+    
+    /* Rich Metric Card */
     .metric-container {
         background-color: #1e2127;
-        padding: 10px 12px;
+        padding: 10px;
         border-radius: 6px;
         border-left: 4px solid #4b5563;
         margin-bottom: 5px;
@@ -44,169 +46,139 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. DATA UNIVERSE ---
-# Primary tickers (Indices) with ETF fallbacks
+# --- 1. FULL DATA UNIVERSE (Mapped to Liquid ETFs) ---
+# Expanded list to ensure no data is missing from your requirements
 TICKERS = {
-    # DRIVERS
-    'US10Y': '^TNX',       # 10Y Yield (CBOE) - Logic: Basis Points
-    'DXY': 'DX-Y.NYB',     # Primary: Index. Fallback logic below.
-    'VIX': '^VIX',         # Primary: Spot VIX. Fallback logic below.
+    # DRIVERS (The Plumbing)
+    'US10Y': '^TNX',       # 10Y Yield
+    'DXY': 'UUP',          # Dollar ETF 
+    'VIX': 'VIXY',         # Volatility ETF
     'HYG': 'HYG',          # Credit High Yield
     'TLT': 'TLT',          # 20Y Bonds
-    'TIP': 'TIP',          # TIPS (for Real Yields check)
+    'SHY': 'SHY',          # 1-3Y Treasury
     
-    # ASSETS
+    # COMMODITIES
+    'GOLD': 'GLD', 'SILVER': 'SLV', 'OIL': 'USO',
+    'NATGAS': 'UNG', 'COPPER': 'CPER', 'AG': 'DBA',
+    
+    # INDICES
     'SPY': 'SPY', 'QQQ': 'QQQ', 'IWM': 'IWM',
     'EEM': 'EEM', 'FXI': 'FXI', 'EWJ': 'EWJ',
-    'GOLD': 'GLD', 'SILVER': 'SLV', 'OIL': 'USO',
-    'COPPER': 'CPER', 'NATGAS': 'UNG', 'AG': 'DBA',
     
     # SECTORS
     'TECH': 'XLK', 'SEMIS': 'SMH', 'BANKS': 'XLF',
     'ENERGY': 'XLE', 'HOME': 'XHB', 'UTIL': 'XLU',
-    'BTC': 'BTC-USD', 'ETH': 'ETH-USD'
-}
-
-# Fallbacks if Indices fail on cloud server
-FALLBACKS = {
-    'DXY': 'UUP', 
-    'VIX': 'VIXY'
+    
+    # CRYPTO & FOREX
+    'BTC': 'BTC-USD', 'ETH': 'ETH-USD', 'SOL': 'SOL-USD',
+    'EURO': 'FXE', 'YEN': 'FXY'
 }
 
 @st.cache_data(ttl=300)
 def fetch_live_data():
-    """Fetches data with robust holiday handling and fallback logic."""
+    """Fetches data individually with error handling."""
     data_map = {}
-    failed_tickers = []
-    
     for key, symbol in TICKERS.items():
         try:
             ticker = yf.Ticker(symbol)
-            # Fetch 10 days to bridge holidays/weekends safely
+            # Fetch 10 days to handle weekends/holidays
             hist = ticker.history(period="10d")
             
-            # Switch to fallback if empty and fallback exists
-            if hist.empty and key in FALLBACKS:
-                symbol = FALLBACKS[key]
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="10d")
-            
-            # Clean data: Drop NaNs to handle holidays
-            hist = hist['Close'].dropna()
-
+            # Data Cleaning
             if not hist.empty and len(hist) >= 2:
-                current = hist.iloc[-1]
-                prev = hist.iloc[-2]
+                current = hist['Close'].iloc[-1]
+                prev = hist['Close'].iloc[-2]
                 
-                # Metric Calculation
+                # Special logic for Yields (Basis points)
                 if key == 'US10Y':
-                    # ^TNX is 10x Yield. Ex: 42.50 -> 42.60. Diff 0.10.
-                    # We want Basis Points (1 bp).
-                    # 4.25% -> 4.26% is 1 bp.
-                    # TNX Diff 0.10 * 10 = 1.0 (Basis Points)
-                    change = (current - prev) * 10 
+                    change = (current - prev) * 10 # Convert to Basis Points
                 else:
-                    # Standard Percent Change
                     change = ((current - prev) / prev) * 100
-                
+                    
                 data_map[key] = {'price': current, 'change': change, 'symbol': symbol}
             else:
                 data_map[key] = {'price': 0.0, 'change': 0.0, 'symbol': symbol}
-                failed_tickers.append(key)
-        except Exception as e:
+        except:
             data_map[key] = {'price': 0.0, 'change': 0.0, 'symbol': symbol}
-            failed_tickers.append(key)
-            
     return data_map
 
-# --- 2. INSTITUTIONAL REGIME ENGINE ---
+# --- 2. LOGIC ENGINE ---
 def analyze_market(data):
     if not data: return None
-    
-    # Safe getters
     def get_c(k): return data.get(k, {}).get('change', 0)
     
-    # Core Data
-    hyg_chg = get_c('HYG')
-    vix_val = data.get('VIX', {}).get('price', 0)
-    vix_chg = get_c('VIX')
-    
-    oil_chg = get_c('OIL')
-    cop_chg = get_c('COPPER')
-    banks_chg = get_c('BANKS')
-    
-    us10y_chg = get_c('US10Y') # In Basis Points now
-    dxy_chg = get_c('DXY')
-    btc_chg = get_c('BTC')
-    
-    # Defaults
+    hyg, vix, oil, cop, us10y, dxy, btc = get_c('HYG'), get_c('VIX'), get_c('OIL'), get_c('COPPER'), get_c('US10Y'), get_c('DXY'), get_c('BTC')
+
     regime = "NEUTRAL"
-    desc = "No dominant macro trend. Follow momentum."
-    color_code = "#6b7280"
+    desc = "No clear macro dominance. Follow momentum."
+    color_code = "#6b7280" 
     longs, shorts, alerts = [], [], []
 
-    # --- LOGIC HIERARCHY ---
-    
-    # 1. RISK OFF (The Veto)
-    # Thresholds: HYG < -0.5% (2-Sigma) OR VIX > 5%
-    if hyg_chg < -0.5 or vix_chg > 5.0:
+    # 1. MACRO REGIME CHECKS
+    if hyg < -0.3 or vix > 3.0:
         regime = "RISK OFF"
-        desc = "Credit Stress or Volatility Spike. Cash is King."
+        desc = "Credit widening or Vol spiking. Cash is King."
         color_code = "#ef4444" # Red
-        longs = ["Cash (UUP)", "Vol (VIX)"]
-        shorts = ["Tech", "Crypto", "Small Caps", "High Yield"]
-        alerts.append("⛔ CREDIT VETO: HYG is breaking down. Stop all long risk.")
+        longs = ["Cash (UUP)", "Vol (VIXY)", "Bonds (TLT)", "Yen (FXY)"]
+        shorts = ["Tech (QQQ)", "Crypto", "Small Caps (IWM)", "EM (EEM)", "High Yield (HYG)", "Banks"]
+        alerts.append("⛔ CREDIT STRESS: Veto Longs. Reduce Exposure.")
 
-    # 2. REFLATION (Growth + Yields)
-    # Requires: Commodities UP + Yields UP + Banks Participating
-    elif (oil_chg > 2.0 or cop_chg > 2.0) and us10y_chg > 5.0 and banks_chg > 0:
+    elif (oil > 0.5 or cop > 0.5) and us10y > 0.5: # Lowered yield threshold for sensitivity
         regime = "REFLATION"
-        desc = "Inflationary Growth. Real Assets outperform."
+        desc = "Growth + Inflation rising. Real assets outperform."
         color_code = "#f59e0b" # Orange
-        longs = ["Energy (XLE)", "Banks (XLF)", "Industrials"]
-        shorts = ["Bonds (TLT)", "Tech (Rate Sensitive)"]
-        alerts.append("🔥 INFLATION PULSE: Rotate to Cyclicals.")
+        longs = ["Energy (XLE)", "Banks (XLF)", "Industrials", "Commodities (Ag/Metals)"]
+        shorts = ["Bonds (TLT)", "Tech (Rate Sensitive)", "Homebuilders (XHB)", "Utilities"]
+        alerts.append("🔥 INFLATION PULSE: Rotate to Real Assets.")
 
-    # 3. LIQUIDITY PUMP (Risk On)
-    # Requires: Dollar Down + BTC Up
-    elif dxy_chg < -0.2 and btc_chg > 2.0:
+    elif dxy < -0.1 and btc > 1.0:
         regime = "LIQUIDITY PUMP"
         desc = "Dollar weakness fueling high-beta assets."
         color_code = "#a855f7" # Purple
-        longs = ["Bitcoin", "Nasdaq (QQQ)", "Semis (SMH)"]
-        shorts = ["Dollar (DXY)", "Defensives"]
-        alerts.append("🌊 LIQUIDITY ON: Green light for Beta.")
+        longs = ["Bitcoin", "Ethereum", "Nasdaq (QQQ)", "Semis (SMH)", "Gold"]
+        shorts = ["Dollar (UUP)", "Cash", "Defensives"]
+        alerts.append("🌊 LIQUIDITY ON: Green light for High Beta.")
 
-    # 4. GOLDILOCKS (Stability)
-    # Requires: VIX Down + Yields Stable (< 5bps move) + Credit Stable
-    elif vix_chg < 0 and abs(us10y_chg) < 5.0 and hyg_chg > -0.1:
+    elif vix < 0 and abs(us10y) < 2.0:
         regime = "GOLDILOCKS"
         desc = "Low vol, stable rates. Favorable for equities."
         color_code = "#22c55e" # Green
-        longs = ["S&P 500", "Tech", "Quality Growth"]
-        shorts = ["Volatility"]
+        longs = ["S&P 500", "Tech (XLK)", "Semis (SMH)", "Housing (XHB)", "Small Caps"]
+        shorts = ["Volatility (VIX)"]
         alerts.append("✅ STABLE: Buy Dips.")
 
-    # 5. MOMENTUM FALLBACK
+    # 2. FALLBACK MOMENTUM (Smart Neutral Logic)
     if not longs:
-        # Find what's moving
-        tradable = ['SPY','QQQ','IWM','BTC','GOLD','OIL','COPPER','BANKS','ENERGY','SEMIS']
-        sorted_assets = sorted([(k, get_c(k)) for k in tradable], key=lambda x: x[1], reverse=True)
+        # Filter tradable assets (exclude drivers like VIX/Yields)
+        asset_keys = ['SPY', 'QQQ', 'IWM', 'BTC', 'ETH', 'GOLD', 'SILVER', 'OIL', 'COPPER', 'SEMIS', 'BANKS', 'ENERGY', 'HOME']
+        assets = {k: get_c(k) for k in asset_keys}
         
-        longs = [f"{k} (Mom)" for k, v in sorted_assets[:2] if v > 0.5]
-        shorts = [f"{k} (Mom)" for k, v in sorted_assets[-2:] if v < -0.5]
+        # Sort by performance
+        sorted_assets = sorted(assets.items(), key=lambda x: x[1], reverse=True)
         
-        if not longs: longs = ["Cash / Wait"]
-        if not shorts: shorts = ["None"]
+        # Pick absolute winners and losers
+        top_pick = sorted_assets[0]
+        bottom_pick = sorted_assets[-1]
+        
+        if top_pick[1] > 0.3:
+            longs = [f"{top_pick[0]} (+{top_pick[1]:.1f}%)", f"{sorted_assets[1][0]} (+{sorted_assets[1][1]:.1f}%)"]
+        else:
+            longs = ["Cash / Wait"]
+            
+        if bottom_pick[1] < -0.3:
+            shorts = [f"{bottom_pick[0]} ({bottom_pick[1]:.1f}%)", f"{sorted_assets[-2][0]} ({sorted_assets[-2][1]:.1f}%)"]
+        else:
+            shorts = ["None"]
 
     return {
         'regime': regime, 'desc': desc, 'color': color_code,
         'longs': longs, 'shorts': shorts, 'alerts': alerts
     }
 
-# --- 3. UI COMPONENTS ---
+# --- 3. GRAPHICS ENGINES ---
+
 def create_nexus_graph(market_data):
-    # Solar System Layout
+    # Expanded Solar System Layout
     nodes = {
         'US10Y': {'pos': (0, 0), 'label': 'Rates'},
         'DXY':   {'pos': (0.8, 0.8), 'label': 'Dollar'},
@@ -221,15 +193,17 @@ def create_nexus_graph(market_data):
         'SMH':   {'pos': (-1.8, 0.8), 'label': 'Semis'},
         'XLE':   {'pos': (1.8, -0.8), 'label': 'Energy'},
         'EEM':   {'pos': (-0.5, -1.5), 'label': 'EM'},
-        'XHB':   {'pos': (-0.8, -0.4), 'label': 'Housing'}
+        'XHB':   {'pos': (-0.8, -0.4), 'label': 'Housing'},
+        'XLF':   {'pos': (1.5, -1.0), 'label': 'Banks'},
+        'VIX':   {'pos': (0, 1.5), 'label': 'Vol'}
     }
     
     edges = [
         ('US10Y', 'QQQ'), ('US10Y', 'GOLD'), ('US10Y', 'XHB'),
         ('DXY', 'GOLD'), ('DXY', 'OIL'), ('DXY', 'EEM'),
-        ('HYG', 'SPY'), ('HYG', 'IWM'), 
+        ('HYG', 'SPY'), ('HYG', 'IWM'), ('HYG', 'XLF'),
         ('QQQ', 'BTC'), ('QQQ', 'SMH'),
-        ('COPPER', 'US10Y'), ('OIL', 'XLE')
+        ('COPPER', 'US10Y'), ('OIL', 'XLE'), ('VIX', 'SPY')
     ]
     
     edge_x, edge_y = [], []
@@ -271,16 +245,17 @@ def create_nexus_graph(market_data):
                              marker=dict(size=node_size, color=node_color, line=dict(width=2, color='white')),
                              textfont=dict(size=11, color='white')))
     
+    # Expanded Range to prevent cutoffs
     fig.update_layout(
         showlegend=False, margin=dict(b=0,l=0,r=0,t=0),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.5, 2.5]),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.0, 2.0]),
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=500
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-3.0, 3.0]),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.5, 2.5]),
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=550
     )
     return fig
 
 def create_heatmap_matrix(market_data):
-    # Correlation Heatmap Logic
+    # Correlation Logic
     z_data = [
         [ 0.9,  0.9,  0.4,  0.6,  0.1,  0.2, 0.7], 
         [-0.8, -0.6, -0.9, -0.3,  0.4,  0.6, -0.9], 
@@ -352,8 +327,12 @@ def main():
             </div>
             """, unsafe_allow_html=True)
             
-            st.success(f"**LONG:** {', '.join(analysis['longs'])}")
-            st.error(f"**AVOID:** {', '.join(analysis['shorts'])}")
+            st.success("**LONG**")
+            for item in analysis['longs']: st.markdown(f"<small>{item}</small>", unsafe_allow_html=True)
+            
+            st.error("**AVOID**")
+            for item in analysis['shorts']: st.markdown(f"<small>{item}</small>", unsafe_allow_html=True)
+            
             if analysis['alerts']: st.error(analysis['alerts'][0], icon="🚨")
 
     with t2:
@@ -382,7 +361,7 @@ def main():
             
             st.graphviz_chart(g, use_container_width=True)
         except:
-            st.warning("Graphviz missing.")
+            st.warning("Graphviz missing. Please install it on the server.")
 
     with t4:
         st.markdown("""
