@@ -18,8 +18,6 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #e0e0e0; }
-    
-    /* Rich Metric Card */
     .metric-container {
         background-color: #1e2127;
         padding: 10px 12px;
@@ -39,9 +37,6 @@ st.markdown("""
     }
     .metric-val { font-size: 18px; font-weight: bold; color: #f3f4f6; }
     .metric-chg { font-size: 12px; font-weight: bold; margin-left: 6px; }
-    
-    .stTabs [data-baseweb="tab-list"] { gap: 20px; border-bottom: 1px solid #2e3039; }
-    .stTabs [data-baseweb="tab"] { height: 50px; font-weight: 600; font-size: 14px; }
     .regime-badge { padding: 15px; border-radius: 8px; text-align: center; border: 1px solid; margin-bottom: 20px; background: #1e2127; }
 </style>
 """, unsafe_allow_html=True)
@@ -101,10 +96,7 @@ def fetch_live_data():
                 prev = hist_clean.iloc[-2]
                 
                 if key == 'US10Y':
-                    # TNX is 10x Yield. (e.g. 42.0 -> 43.0 is +1.0 diff).
-                    # 1.0 diff in TNX = 10 bps.
-                    # We want Basis Points. Multiplier 10 is correct.
-                    change = (current - prev) * 10 
+                    change = (current - prev) * 10
                 else:
                     change = ((current - prev) / prev) * 100
                     
@@ -113,7 +105,6 @@ def fetch_live_data():
                 raise ValueError("Insufficient data")
                 
         except Exception as e:
-            # Mark as error so we can warn user later
             data_map[key] = {'price': 0.0, 'change': 0.0, 'symbol': symbol, 'error': True, 'msg': str(e)}
             
     return data_map
@@ -169,7 +160,6 @@ def analyze_market(data):
         alerts.append("🔥 INFLATION PULSE: Rotate to Cyclicals.")
 
     # 3. LIQUIDITY PUMP (Risk On)
-    # Requires: Dollar Down + BTC Up
     elif dxy < -0.2 and btc > 2.0:
         regime = "LIQUIDITY PUMP"
         desc = "Dollar weakness fueling high-beta assets."
@@ -268,6 +258,7 @@ def create_nexus_graph(market_data):
         
         ticker = d.get('symbol', key)
         price = d.get('price', 0)
+        
         fmt_chg = f"{chg:+.2f}%"
         if key == 'US10Y': fmt_chg = f"{chg:+.1f} bps"
         
@@ -351,7 +342,7 @@ def main():
 
     if not analysis: return
 
-    t1, t2, t3, t4 = st.tabs(["🚀 Dashboard", "📊 Heatmap", "🌊 Liquidity Flow", "📖 Master Playbook"])
+    t1, t2, t3, t4 = st.tabs(["🚀 Dashboard", "📊 Heatmap", "🌊 Liquidity", "📖 Execution Guide"])
 
     with t1:
         c_g, c_a = st.columns([2.5, 1])
@@ -374,182 +365,52 @@ def main():
         st.plotly_chart(create_heatmap_matrix(), use_container_width=True)
 
     with t3:
-        st.markdown("### 🌊 The Macro Transmission Mechanism")
-        st.info("Visualizes how Fed Policy flows downstream to specific sectors. This is the wiring diagram of the global economy.")
-        
-        col_flow, col_expl = st.columns([2, 1])
-        
-        with col_flow:
-            try:
-                g = graphviz.Digraph()
-                g.attr(rankdir='TB', bgcolor='transparent')
-                g.attr('node', shape='box', style='filled, rounded', fontname='Helvetica', fontcolor='white', penwidth='0')
-                g.attr('edge', color='#6b7280')
-                
-                g.node('FED', 'FED & TREASURY\n(Liquidity Source)', fillcolor='#4f46e5')
-                g.node('RATE', 'YIELDS & RATES\n(Cost of Money)', fillcolor='#b91c1c')
-                g.node('USD', 'DOLLAR (DXY)\n(Global Collateral)', fillcolor='#1e3a8a')
-                g.node('CRED', 'CREDIT (HYG)\n(Risk Appetite)', fillcolor='#7e22ce')
-                
-                g.node('GROWTH', 'TECH / CRYPTO\n(Long Duration)', fillcolor='#1f2937')
-                g.node('REAL', 'COMMODITIES\n(Real Assets)', fillcolor='#1f2937')
-                g.node('EM', 'EMERGING MKTS\n(Dollar Sensitive)', fillcolor='#1f2937')
-                g.node('CYCL', 'BANKS / ENERGY\n(Growth Sensitive)', fillcolor='#1f2937')
-                
-                # Expanded Sectors
-                g.node('SEMIS', 'Semis (SMH)', fillcolor='#111827', fontsize='9')
-                g.node('HOUSING', 'Housing (XHB)', fillcolor='#111827', fontsize='9')
-                g.node('BTC', 'Bitcoin', fillcolor='#111827', fontsize='9')
-                g.node('IND', 'Industrials', fillcolor='#111827', fontsize='9')
-                
-                g.edge('FED','RATE'); g.edge('FED','USD'); g.edge('FED','CRED')
-                g.edge('RATE','GROWTH'); g.edge('RATE','REAL'); g.edge('USD','EM')
-                g.edge('CRED','GROWTH'); g.edge('CRED','CYCL')
-                
-                # Sub-sector links
-                g.edge('TECH','SEMIS', style='dashed'); g.edge('TECH','BTC', style='dashed')
-                g.edge('CYCL','IND', style='dashed')
-                g.edge('RATE', 'HOUSING', style='dashed')
-                
-                st.graphviz_chart(g, use_container_width=True)
-            except:
-                st.warning("Graphviz missing. Please install it on the server.")
-        
-        with col_expl:
-            with st.expander("1. The Source (Fed/Treasury)", expanded=True):
-                st.markdown("""
-                * **Liquidity:** When Fed buys assets (QE) or Treasury spends cash (TGA down), liquidity rises.
-                * **Impact:** Liquidity seeks the "riskiest" home first (Crypto, Tech).
-                """)
-            with st.expander("2. The Transmission (Rates/USD)", expanded=True):
-                st.markdown("""
-                * **Real Yields:** If rates rise faster than inflation, it kills Gold and Tech valuations.
-                * **Dollar:** A strong DXY acts as a wrecking ball for Emerging Markets and Commodities.
-                """)
-            with st.expander("3. The Destination (Assets)", expanded=True):
-                st.markdown("""
-                * **Long Duration:** Tech/Crypto need *low rates* and *high liquidity*.
-                * **Real Assets:** Oil/Banks need *high growth* and *inflation*.
-                """)
+        st.info("Visualizes how Fed Policy flows downstream to specific sectors.")
+        try:
+            g = graphviz.Digraph()
+            g.attr(rankdir='TB', bgcolor='transparent')
+            g.attr('node', shape='box', style='filled, rounded', fontname='Helvetica', fontcolor='white', penwidth='0')
+            g.attr('edge', color='#6b7280')
+            
+            g.node('FED', 'FED & TREASURY\n(Liquidity)', fillcolor='#4f46e5')
+            g.node('RATE', 'YIELDS & RATES\n(Cost of Money)', fillcolor='#b91c1c')
+            g.node('USD', 'DOLLAR (DXY)\n(Collateral)', fillcolor='#1e3a8a')
+            g.node('CRED', 'CREDIT (HYG)\n(Risk Appetite)', fillcolor='#7e22ce')
+            
+            g.node('GROWTH', 'TECH / CRYPTO', fillcolor='#1f2937')
+            g.node('REAL', 'COMMODITIES', fillcolor='#1f2937')
+            g.node('EM', 'EMERGING MKTS', fillcolor='#1f2937')
+            g.node('CYCL', 'BANKS / ENERGY', fillcolor='#1f2937')
+            
+            g.edge('FED','RATE'); g.edge('FED','USD'); g.edge('FED','CRED')
+            g.edge('RATE','GROWTH'); g.edge('RATE','REAL'); g.edge('USD','EM')
+            g.edge('CRED','GROWTH'); g.edge('CRED','CYCL')
+            
+            st.graphviz_chart(g, use_container_width=True)
+        except:
+            st.warning("Graphviz missing. Please install it on the server.")
 
     with t4:
         st.markdown("""
-# 📖 MacroNexus Pro: Daily Trader's Playbook
-
-This guide explains how to use the interactive map as a decision-support engine.
-
-## ⏰ The 5-Minute Morning Routine
-
-Before you look at a single stock chart, open the MacroNexus and perform this "Health Check."
-
-### 1. Diagnose the "Plumbing" (The Veto Check)
-
-**Goal:** Determine if it is safe to take risk today.
-
-* **Click on `HYG` (High Yield Credit)**
-
-  * *Question:* Is HYG stable or rising?
-
-  * *Logic:* HYG measures corporate stress.
-
-  * *Decision:* If HYG is crashing, **DO NOT** buy the dip in Stocks (`SPY`, `IWM`). The rally is likely a trap.
-
-* **Click on `RealYields` (TIPS)**
-
-  * *Question:* Are Real Yields spiking?
-
-  * *Logic:* High real yields kill "duration" assets (Gold, Tech, Crypto).
-
-  * *Decision:* If Real Yields are surging, **DO NOT** go long Gold or Nasdaq today.
-
-### 2. Identify the Regime (The Tailwind Check)
-
-**Goal:** Align your trades with the current wind direction.
-
-Use the Regime Buttons (Keys `1`-`4`) to see what is currently favored:
-
-| **If Market Feels Like...** | **Select Regime** | **Actionable Strategy** | 
-| :--- | :--- | :--- |
-| **"Bad news is good news"** | **LIQUIDITY** | **Focus:** Crypto (`BTC`), Tech (`QQQ`).  **Ignore:** Value stocks, Commodities. | 
-| **"Everything is selling off"** | **RISK-OFF** | **Focus:** Cash (`DXY`), Volatility (`VIX`).  **Avoid:** Small Caps (`Russell`), Emerging Markets. | 
-| **"Growth is booming"** | **GOLDILOCKS** | **Focus:** Everything works, but `Copper` and `Semis` lead.  **Avoid:** Defensive plays (Utilities, Bonds). | 
-| **"Prices up, Growth down"** | **REFLATION** | **Focus:** Energy (`XLE`), Banks (`XLF`).  **Avoid:** Tech (`QQQ`) - it hates inflation. | 
-
-## 🚦 "What To Do" vs. "What NOT To Do"
-
-The tool is best used to filter your ideas. Here are specific examples:
-
-### Scenario A: You want to buy NVIDIA or Tech (QQQ)
-
-1. **Check `US10Y` & `RealYields`:**
-
-   * *Tool View:* Click `RealYields`. Follow the thick red line to `Nasdaq`.
-
-   * *Verdict:* If the line source (Yields) is UP, the target (Nasdaq) usually goes DOWN.
-
-   * *Action:* **WAIT.** Don't fight the Fed.
-
-### Scenario B: You want to buy the dip in Crypto (BTC)
-
-1. **Check `Liquidity` & `TGA`:**
-
-   * *Tool View:* Click `Liquidity`. Follow the green line to `Bitcoin`.
-
-   * *Verdict:* Is the Fed draining liquidity (QT)? Or is the TGA refilling?
-
-   * *Action:* If Liquidity is dropping, Crypto has no fuel. **NO TRADE.**
-
-### Scenario C: You want to trade a "China Reopening" (FXI/Copper)
-
-1. **Check `DXY` (Dollar):**
-
-   * *Tool View:* Click `DXY`. Look at the red line to `EmgMkts` and `China`.
-
-   * *Verdict:* A strong dollar crushes emerging markets (because of dollar-denominated debt).
-
-   * *Action:* Only buy China if the DXY is weakening.
-
-## ⚡ How to Spot Opportunity (Divergences)
-
-The biggest trades happen when the market "breaks" a correlation temporarily. Use the tool to spot these:
-
-* **The "Coil" Setup:**
-
-  * If **Copper** rips higher (Growth signal)...
-
-  * But **Oil** and **Rates** haven't moved yet...
-
-  * *Trade:* The market is lagging. Look for **Energy (`XLE`)** or **Industrials** to play catch-up.
-
-* **The "Fakeout" Setup:**
-
-  * If **S&P 500** makes a new high...
-
-  * But **HYG (Credit)** makes a lower high...
-
-  * *Trade:* This is a bearish divergence. Credit isn't confirming the move. **Short the S&P 500.**
-
-## 🛠 Practical Workflow Summary
-
-1. **Open Tool.**
-
-2. **Press `2` (Risk-Off Mode).**
-
-   * Are `DXY` and `VIX` actively rising on your charts?
-
-   * **YES:** Sit on hands or short.
-
-   * **NO:** Proceed to step 3.
-
-3. **Click your target asset (e.g., `Gold`).**
-
-   * Look at the lines connected to it (`RealYields`, `DXY`).
-
-   * Are those drivers moving in the *opposite* direction of your trade?
-
-   * **YES:** You have a green light.
-
-   * **NO:** You are fighting the macro current. Reduce position size or wait.
+        ### 🕒 The "Last Hour" Execution Plan (3:00 PM - 4:00 PM EST)
+        
+        You trade Daily/Weekly. The market close is your "Source of Truth."
+        
+        #### 1. The Veto Check (3:30 PM)
+        * Look at the **Dashboard Tab**.
+        * **Is Credit (HYG) Red?** (> -0.5% drop)
+        * **Is Volatility (VIX) Red/Up?** (> 5% spike)
+        * **DECISION:** If YES, cancel all Buy orders. Close losing longs. **Do not carry risk overnight.**
+        
+        #### 2. Confirm The Trend (3:45 PM)
+        * Check the **Regime Badge**.
+        * **Liquidity Pump?** Buy BTC, ETH, Nasdaq into the close.
+        * **Reflation?** Buy Energy/Banks.
+        * **Goldilocks?** Add to winning tech positions.
+        
+        #### 3. Weekly Close (Friday 3:50 PM)
+        * If `US10Y` finished the week HIGHER (Green here, Red for assets) -> **Reduce Tech/Gold Exposure.**
+        * If `DXY` finished the week HIGHER -> **Reduce Crypto/EM Exposure.**
         """)
 
 if __name__ == "__main__":
