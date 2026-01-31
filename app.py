@@ -18,11 +18,9 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #e0e0e0; }
-    
-    /* Rich Metric Card */
     .metric-container {
         background-color: #1e2127;
-        padding: 10px;
+        padding: 10px 12px;
         border-radius: 6px;
         border-left: 4px solid #4b5563;
         margin-bottom: 5px;
@@ -39,17 +37,13 @@ st.markdown("""
     }
     .metric-val { font-size: 18px; font-weight: bold; color: #f3f4f6; }
     .metric-chg { font-size: 12px; font-weight: bold; margin-left: 6px; }
-    
-    .stTabs [data-baseweb="tab-list"] { gap: 20px; border-bottom: 1px solid #2e3039; }
-    .stTabs [data-baseweb="tab"] { height: 50px; font-weight: 600; font-size: 14px; }
     .regime-badge { padding: 15px; border-radius: 8px; text-align: center; border: 1px solid; margin-bottom: 20px; background: #1e2127; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. FULL DATA UNIVERSE (Mapped to Liquid ETFs) ---
-# Expanded list to ensure no data is missing from your requirements
+# --- 1. FULL DATA UNIVERSE ---
 TICKERS = {
-    # DRIVERS (The Plumbing)
+    # DRIVERS
     'US10Y': '^TNX',       # 10Y Yield
     'DXY': 'UUP',          # Dollar ETF 
     'VIX': 'VIXY',         # Volatility ETF
@@ -76,22 +70,18 @@ TICKERS = {
 
 @st.cache_data(ttl=300)
 def fetch_live_data():
-    """Fetches data individually with error handling."""
     data_map = {}
     for key, symbol in TICKERS.items():
         try:
             ticker = yf.Ticker(symbol)
-            # Fetch 10 days to handle weekends/holidays
             hist = ticker.history(period="10d")
             
-            # Data Cleaning
             if not hist.empty and len(hist) >= 2:
                 current = hist['Close'].iloc[-1]
                 prev = hist['Close'].iloc[-2]
                 
-                # Special logic for Yields (Basis points)
                 if key == 'US10Y':
-                    change = (current - prev) * 10 # Convert to Basis Points
+                    change = (current - prev) * 10 
                 else:
                     change = ((current - prev) / prev) * 100
                     
@@ -110,23 +100,22 @@ def analyze_market(data):
     hyg, vix, oil, cop, us10y, dxy, btc = get_c('HYG'), get_c('VIX'), get_c('OIL'), get_c('COPPER'), get_c('US10Y'), get_c('DXY'), get_c('BTC')
 
     regime = "NEUTRAL"
-    desc = "No clear macro dominance. Follow momentum."
+    desc = "No clear macro dominance. Follow price momentum."
     color_code = "#6b7280" 
     longs, shorts, alerts = [], [], []
 
-    # 1. MACRO REGIME CHECKS
     if hyg < -0.3 or vix > 3.0:
         regime = "RISK OFF"
         desc = "Credit widening or Vol spiking. Cash is King."
-        color_code = "#ef4444" # Red
+        color_code = "#ef4444"
         longs = ["Cash (UUP)", "Vol (VIXY)", "Bonds (TLT)", "Yen (FXY)"]
         shorts = ["Tech (QQQ)", "Crypto", "Small Caps (IWM)", "EM (EEM)", "High Yield (HYG)", "Banks"]
         alerts.append("⛔ CREDIT STRESS: Veto Longs. Reduce Exposure.")
 
-    elif (oil > 0.5 or cop > 0.5) and us10y > 0.5: # Lowered yield threshold for sensitivity
+    elif (oil > 0.5 or cop > 0.5) and us10y > 0.5:
         regime = "REFLATION"
         desc = "Growth + Inflation rising. Real assets outperform."
-        color_code = "#f59e0b" # Orange
+        color_code = "#f59e0b"
         longs = ["Energy (XLE)", "Banks (XLF)", "Industrials", "Commodities (Ag/Metals)"]
         shorts = ["Bonds (TLT)", "Tech (Rate Sensitive)", "Homebuilders (XHB)", "Utilities"]
         alerts.append("🔥 INFLATION PULSE: Rotate to Real Assets.")
@@ -134,7 +123,7 @@ def analyze_market(data):
     elif dxy < -0.1 and btc > 1.0:
         regime = "LIQUIDITY PUMP"
         desc = "Dollar weakness fueling high-beta assets."
-        color_code = "#a855f7" # Purple
+        color_code = "#a855f7"
         longs = ["Bitcoin", "Ethereum", "Nasdaq (QQQ)", "Semis (SMH)", "Gold"]
         shorts = ["Dollar (UUP)", "Cash", "Defensives"]
         alerts.append("🌊 LIQUIDITY ON: Green light for High Beta.")
@@ -142,21 +131,15 @@ def analyze_market(data):
     elif vix < 0 and abs(us10y) < 2.0:
         regime = "GOLDILOCKS"
         desc = "Low vol, stable rates. Favorable for equities."
-        color_code = "#22c55e" # Green
+        color_code = "#22c55e"
         longs = ["S&P 500", "Tech (XLK)", "Semis (SMH)", "Housing (XHB)", "Small Caps"]
         shorts = ["Volatility (VIX)"]
         alerts.append("✅ STABLE: Buy Dips.")
 
-    # 2. FALLBACK MOMENTUM (Smart Neutral Logic)
     if not longs:
-        # Filter tradable assets (exclude drivers like VIX/Yields)
         asset_keys = ['SPY', 'QQQ', 'IWM', 'BTC', 'ETH', 'GOLD', 'SILVER', 'OIL', 'COPPER', 'SEMIS', 'BANKS', 'ENERGY', 'HOME']
         assets = {k: get_c(k) for k in asset_keys}
-        
-        # Sort by performance
         sorted_assets = sorted(assets.items(), key=lambda x: x[1], reverse=True)
-        
-        # Pick absolute winners and losers
         top_pick = sorted_assets[0]
         bottom_pick = sorted_assets[-1]
         
@@ -175,10 +158,8 @@ def analyze_market(data):
         'longs': longs, 'shorts': shorts, 'alerts': alerts
     }
 
-# --- 3. GRAPHICS ENGINES ---
-
+# --- 3. UI COMPONENTS ---
 def create_nexus_graph(market_data):
-    # Expanded Solar System Layout
     nodes = {
         'US10Y': {'pos': (0, 0), 'label': 'Rates'},
         'DXY':   {'pos': (0.8, 0.8), 'label': 'Dollar'},
@@ -224,7 +205,6 @@ def create_nexus_graph(market_data):
         
         col = '#22c55e' if chg > 0 else '#ef4444'
         if chg == 0: col = '#6b7280'
-        # Inverse for Risk Drivers
         if key in ['US10Y', 'DXY', 'VIX']: col = '#ef4444' if chg > 0 else '#22c55e'
 
         node_color.append(col)
@@ -245,17 +225,15 @@ def create_nexus_graph(market_data):
                              marker=dict(size=node_size, color=node_color, line=dict(width=2, color='white')),
                              textfont=dict(size=11, color='white')))
     
-    # Expanded Range to prevent cutoffs
     fig.update_layout(
         showlegend=False, margin=dict(b=0,l=0,r=0,t=0),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-3.0, 3.0]),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.5, 2.5]),
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=550
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.5, 2.5]),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.0, 2.0]),
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=500
     )
     return fig
 
 def create_heatmap_matrix(market_data):
-    # Correlation Logic
     z_data = [
         [ 0.9,  0.9,  0.4,  0.6,  0.1,  0.2, 0.7], 
         [-0.8, -0.6, -0.9, -0.3,  0.4,  0.6, -0.9], 
@@ -263,7 +241,6 @@ def create_heatmap_matrix(market_data):
         [ 0.8,  0.7,  0.1,  0.8,  0.6,  0.9, 0.8], 
         [ 0.2,  0.3,  0.5,  0.9,  0.9,  0.8, 0.3]  
     ]
-    
     x_labels = ['Tech', 'Crypto', 'Gold', 'EM', 'Energy', 'Banks', 'Housing']
     y_labels = ['Liquidity', 'Real Yields', 'Dollar', 'Credit', 'Growth']
 
@@ -281,23 +258,17 @@ def main():
         market_data = fetch_live_data()
         analysis = analyze_market(market_data)
 
-    # Metrics
     st.markdown("### 📡 Market Pulse")
     cols = st.columns(6)
-    
     def tile(c, label, key):
         d = market_data.get(key, {})
         val = d.get('price', 0)
         chg = d.get('change', 0)
         sym = d.get('symbol', key)
         color = "#ef4444" if chg < 0 else "#22c55e"
-        
-        # Logic: Veto/Risk assets Inverse Color
         if key in ['VIX', 'US10Y', 'DXY']: color = "#ef4444" if chg > 0 else "#22c55e"
-        
         fmt_chg = f"{chg:+.2f}%"
         if key == 'US10Y': fmt_chg = f"{chg:+.1f} bps"
-
         c.markdown(f"""
         <div class="metric-container" style="border-left-color: {color};">
             <div class="metric-header"><span class="metric-label">{label}</span><span class="metric-ticker">{sym}</span></div>
@@ -312,7 +283,6 @@ def main():
     tile(cols[4], "Oil", "OIL")
     tile(cols[5], "Bitcoin", "BTC")
 
-    # Tabs
     t1, t2, t3, t4 = st.tabs(["🚀 Dashboard", "📊 Heatmap", "🌊 Liquidity", "📖 Playbook"])
 
     with t1:
@@ -326,13 +296,10 @@ def main():
                 <div style="font-size: 11px; color: #ccc;">{analysis['desc']}</div>
             </div>
             """, unsafe_allow_html=True)
-            
             st.success("**LONG**")
             for item in analysis['longs']: st.markdown(f"<small>{item}</small>", unsafe_allow_html=True)
-            
             st.error("**AVOID**")
             for item in analysis['shorts']: st.markdown(f"<small>{item}</small>", unsafe_allow_html=True)
-            
             if analysis['alerts']: st.error(analysis['alerts'][0], icon="🚨")
 
     with t2:
@@ -346,29 +313,155 @@ def main():
             g.attr('node', shape='box', style='filled, rounded', fontname='Helvetica', fontcolor='white', penwidth='0')
             g.attr('edge', color='#6b7280')
             
-            g.node('FED', 'FED & TREASURY', fillcolor='#4f46e5')
-            g.node('RATE', 'YIELDS & RATES', fillcolor='#b91c1c')
-            g.node('USD', 'DOLLAR (DXY)', fillcolor='#1e3a8a')
-            g.node('CRED', 'CREDIT (HYG)', fillcolor='#7e22ce')
+            # --- EXPANDED TRANSMISSION FLOW ---
+            g.node('FED', 'FED & TREASURY\n(Liquidity Source)', fillcolor='#4f46e5')
             
-            g.node('GROWTH', 'TECH / CRYPTO', fillcolor='#1f2937')
-            g.node('REAL', 'COMMODITIES', fillcolor='#1f2937')
-            g.node('EM', 'EMERGING MKTS', fillcolor='#1f2937')
+            g.node('YIELDS', 'US 10Y YIELDS\n(Cost of Money)', fillcolor='#b91c1c')
+            g.node('DXY', 'US DOLLAR\n(Global Collateral)', fillcolor='#1e3a8a')
+            g.node('CREDIT', 'CREDIT (HYG)\n(Risk Appetite)', fillcolor='#7e22ce')
             
-            g.edge('FED','RATE'); g.edge('FED','USD'); g.edge('FED','CRED')
-            g.edge('RATE','GROWTH'); g.edge('RATE','REAL'); g.edge('USD','EM')
-            g.edge('CRED','GROWTH')
+            g.node('TECH', 'TECH / CRYPTO\n(Long Duration)', fillcolor='#1f2937')
+            g.node('GOLD', 'GOLD / COMMOD.\n(Real Assets)', fillcolor='#1f2937')
+            g.node('EM', 'EMERGING MKTS\n(Dollar Sensitive)', fillcolor='#1f2937')
+            g.node('CYCL', 'BANKS / ENERGY\n(Growth Sensitive)', fillcolor='#1f2937')
+            
+            # Expanded Sectors
+            g.node('SEMIS', 'Semis (SMH)', fillcolor='#111827', fontsize='9')
+            g.node('HOUSING', 'Housing (XHB)', fillcolor='#111827', fontsize='9')
+            g.node('BTC', 'Bitcoin', fillcolor='#111827', fontsize='9')
+            g.node('IND', 'Industrials', fillcolor='#111827', fontsize='9')
+            
+            g.edge('FED','YIELDS'); g.edge('FED','DXY'); g.edge('FED','CRED')
+            g.edge('YIELDS','TECH', label='Valuation'); g.edge('YIELDS','GOLD', label='Opp Cost'); g.edge('YIELDS','HOUSING')
+            g.edge('DXY','EM'); g.edge('DXY','GOLD')
+            g.edge('CRED','TECH'); g.edge('CRED','CYCL')
+            
+            # Sub-sector links
+            g.edge('TECH','SEMIS', style='dashed'); g.edge('TECH','BTC', style='dashed')
+            g.edge('CYCL','IND', style='dashed')
             
             st.graphviz_chart(g, use_container_width=True)
         except:
             st.warning("Graphviz missing. Please install it on the server.")
 
     with t4:
+        # FULL PLAYBOOK CONTENT
         st.markdown("""
-        ### 📖 Daily Workflow
-        1. **Check Plumbing (HYG, VIX):** If Red, Market is Unsafe.
-        2. **Check Regime:** Follow the Badge (Risk Off vs Liquidity).
-        3. **Confirm:** Check `US10Y` trends before buying Tech/Gold.
+# 📖 MacroNexus Pro: Daily Trader's Playbook
+
+This guide explains how to use the interactive map as a decision-support engine.
+
+## ⏰ The 5-Minute Morning Routine
+
+Before you look at a single stock chart, open the MacroNexus and perform this "Health Check."
+
+### 1. Diagnose the "Plumbing" (The Veto Check)
+
+**Goal:** Determine if it is safe to take risk today.
+
+* **Click on `HYG` (High Yield Credit)**
+
+  * *Question:* Is HYG stable or rising?
+
+  * *Logic:* HYG measures corporate stress.
+
+  * *Decision:* If HYG is crashing, **DO NOT** buy the dip in Stocks (`SPY`, `IWM`). The rally is likely a trap.
+
+* **Click on `RealYields` (TIPS)**
+
+  * *Question:* Are Real Yields spiking?
+
+  * *Logic:* High real yields kill "duration" assets (Gold, Tech, Crypto).
+
+  * *Decision:* If Real Yields are surging, **DO NOT** go long Gold or Nasdaq today.
+
+### 2. Identify the Regime (The Tailwind Check)
+
+**Goal:** Align your trades with the current wind direction.
+
+Use the Regime Buttons (Keys `1`-`4`) to see what is currently favored:
+
+| **If Market Feels Like...** | **Select Regime** | **Actionable Strategy** | 
+| **"Bad news is good news"** | **LIQUIDITY** | **Focus:** Crypto (`BTC`), Tech (`QQQ`).  **Ignore:** Value stocks, Commodities. | 
+| **"Everything is selling off"** | **RISK-OFF** | **Focus:** Cash (`DXY`), Volatility (`VIX`).  **Avoid:** Small Caps (`Russell`), Emerging Markets. | 
+| **"Growth is booming"** | **GOLDILOCKS** | **Focus:** Everything works, but `Copper` and `Semis` lead.  **Avoid:** Defensive plays (Utilities, Bonds). | 
+| **"Prices up, Growth down"** | **REFLATION** | **Focus:** Energy (`XLE`), Banks (`XLF`).  **Avoid:** Tech (`QQQ`) - it hates inflation. | 
+
+## 🚦 "What To Do" vs. "What NOT To Do"
+
+The tool is best used to filter your ideas. Here are specific examples:
+
+### Scenario A: You want to buy NVIDIA or Tech (QQQ)
+
+1. **Check `US10Y` & `RealYields`:**
+
+   * *Tool View:* Click `RealYields`. Follow the thick red line to `Nasdaq`.
+
+   * *Verdict:* If the line source (Yields) is UP, the target (Nasdaq) usually goes DOWN.
+
+   * *Action:* **WAIT.** Don't fight the Fed.
+
+### Scenario B: You want to buy the dip in Crypto (BTC)
+
+1. **Check `Liquidity` & `TGA`:**
+
+   * *Tool View:* Click `Liquidity`. Follow the green line to `Bitcoin`.
+
+   * *Verdict:* Is the Fed draining liquidity (QT)? Or is the TGA refilling?
+
+   * *Action:* If Liquidity is dropping, Crypto has no fuel. **NO TRADE.**
+
+### Scenario C: You want to trade a "China Reopening" (FXI/Copper)
+
+1. **Check `DXY` (Dollar):**
+
+   * *Tool View:* Click `DXY`. Look at the red line to `EmgMkts` and `China`.
+
+   * *Verdict:* A strong dollar crushes emerging markets (because of dollar-denominated debt).
+
+   * *Action:* Only buy China if the DXY is weakening.
+
+## ⚡ How to Spot Opportunity (Divergences)
+
+The biggest trades happen when the market "breaks" a correlation temporarily. Use the tool to spot these:
+
+* **The "Coil" Setup:**
+
+  * If **Copper** rips higher (Growth signal)...
+
+  * But **Oil** and **Rates** haven't moved yet...
+
+  * *Trade:* The market is lagging. Look for **Energy (`XLE`)** or **Industrials** to play catch-up.
+
+* **The "Fakeout" Setup:**
+
+  * If **S&P 500** makes a new high...
+
+  * But **HYG (Credit)** makes a lower high...
+
+  * *Trade:* This is a bearish divergence. Credit isn't confirming the move. **Short the S&P 500.**
+
+## 🛠 Practical Workflow Summary
+
+1. **Open Tool.**
+
+2. **Press `2` (Risk-Off Mode).**
+
+   * Are `DXY` and `VIX` actively rising on your charts?
+
+   * **YES:** Sit on hands or short.
+
+   * **NO:** Proceed to step 3.
+
+3. **Click your target asset (e.g., `Gold`).**
+
+   * Look at the lines connected to it (`RealYields`, `DXY`).
+
+   * Are those drivers moving in the *opposite* direction of your trade?
+
+   * **YES:** You have a green light.
+
+   * **NO:** You are fighting the macro current. Reduce position size or wait.
         """)
 
 if __name__ == "__main__":
