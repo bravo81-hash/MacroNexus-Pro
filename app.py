@@ -23,8 +23,9 @@ st.markdown("""
         border-radius: 10px;
         border-left: 5px solid #4b5563;
         margin-bottom: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    .metric-label { font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; }
+    .metric-label { font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
     .metric-value { font-size: 24px; font-weight: bold; color: #f3f4f6; }
     .metric-delta { font-size: 14px; font-weight: bold; }
     
@@ -36,52 +37,57 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 1. DATA LAYER (Live Data Fetching) ---
-# Mapping friendly names to Yahoo Finance Tickers
+# NOTE: Switched to ETFs (GLD, USO, UUP, VIXY) for robustness on Cloud Hosting.
+# ^TNX (Yields) is crucial, so we keep it but have fallback logic.
 TICKERS = {
-    'US10Y': '^TNX',       # 10 Year Treasury Yield
-    'DXY': 'DX-Y.NYB',     # US Dollar Index
-    'VIX': '^VIX',         # Volatility
+    'US10Y': '^TNX',       # 10 Year Treasury Yield (CBOE)
+    'DXY': 'UUP',          # PROXY: Invesco DB US Dollar Index Bullish Fund
+    'VIX': 'VIXY',         # PROXY: ProShares VIX Short-Term Futures ETF
     'HYG': 'HYG',          # High Yield Corp Bonds (Credit)
     'SPY': 'SPY',          # S&P 500
     'QQQ': 'QQQ',          # Nasdaq
     'IWM': 'IWM',          # Russell 2000
     'BTC': 'BTC-USD',      # Bitcoin
-    'GOLD': 'GC=F',        # Gold Futures
-    'OIL': 'CL=F',         # Crude Oil
-    'COPPER': 'HG=F',      # Copper
+    'GOLD': 'GLD',         # PROXY: SPDR Gold Shares
+    'OIL': 'USO',          # PROXY: United States Oil Fund
+    'COPPER': 'CPER',      # PROXY: United States Copper Index Fund
     'TLT': 'TLT'           # 20Y Treasury Bond
 }
 
 @st.cache_data(ttl=300) # Cache data for 5 minutes
 def fetch_live_data():
-    """Fetches real-time percent change for macro assets."""
+    """Fetches real-time percent change for macro assets individually to prevent bulk failures."""
     data_map = {}
     
-    try:
-        # Fetch all at once for speed
-        tickers_list = " ".join(TICKERS.values())
-        data = yf.download(tickers_list, period="5d", progress=False)['Close']
-        
-        for key, symbol in TICKERS.items():
-            if symbol in data.columns:
-                series = data[symbol]
-                # Calculate daily percent change
-                if len(series) >= 2:
-                    current = series.iloc[-1]
-                    prev = series.iloc[-2]
-                    change_pct = ((current - prev) / prev) * 100
-                    data_map[key] = {
-                        'price': current,
-                        'change': change_pct,
-                        'symbol': symbol
-                    }
-                else:
-                    data_map[key] = {'price': 0, 'change': 0, 'symbol': symbol}
-    except Exception as e:
-        st.error(f"Data Feed Error: {e}")
-        # Fallback to 0s if API fails (prevents crash)
-        for key in TICKERS:
-            data_map[key] = {'price': 0, 'change': 0, 'symbol': TICKERS[key]}
+    for key, symbol in TICKERS.items():
+        try:
+            # Fetch individual ticker history
+            ticker = yf.Ticker(symbol)
+            # Get 5 days to ensure we have at least 2 valid trading days (ignoring weekends/holidays)
+            hist = ticker.history(period="5d")
+            
+            if not hist.empty and len(hist) >= 2:
+                # Ensure we use Close prices
+                closes = hist['Close']
+                current = closes.iloc[-1]
+                prev = closes.iloc[-2]
+                
+                # Calculate change
+                change_pct = ((current - prev) / prev) * 100
+                
+                data_map[key] = {
+                    'price': current,
+                    'change': change_pct,
+                    'symbol': symbol
+                }
+            else:
+                # Fallback if data is empty (e.g. market closed or API issue)
+                data_map[key] = {'price': 0.0, 'change': 0.0, 'symbol': symbol}
+                
+        except Exception as e:
+            # Silent fail for individual ticker to keep dashboard alive
+            print(f"Error fetching {symbol}: {e}")
+            data_map[key] = {'price': 0.0, 'change': 0.0, 'symbol': symbol}
             
     return data_map
 
@@ -90,14 +96,16 @@ def analyze_market(data):
     """Determines the current Macro Regime based on asset performance."""
     if not data: return None
 
-    # Thresholds
-    hyg_chg = data.get('HYG', {}).get('change', 0)
-    vix_chg = data.get('VIX', {}).get('change', 0)
-    oil_chg = data.get('OIL', {}).get('change', 0)
-    copper_chg = data.get('COPPER', {}).get('change', 0)
-    us10y_chg = data.get('US10Y', {}).get('change', 0)
-    dxy_chg = data.get('DXY', {}).get('change', 0)
-    btc_chg = data.get('BTC', {}).get('change', 0)
+    # Safe extraction with defaults
+    def get_chg(k): return data.get(k, {}).get('change', 0)
+
+    hyg_chg = get_chg('HYG')
+    vix_chg = get_chg('VIX')
+    oil_chg = get_chg('OIL')
+    copper_chg = get_chg('COPPER')
+    us10y_chg = get_chg('US10Y')
+    dxy_chg = get_chg('DXY')
+    btc_chg = get_chg('BTC')
 
     # Logic Tree
     regime = "NEUTRAL"
@@ -107,29 +115,30 @@ def analyze_market(data):
     alerts = []
 
     # 1. THE VETO (Risk Off)
-    # If Credit is down significantly or VIX is spiking hard
-    if hyg_chg < -0.3 or vix_chg > 5.0:
+    # If Credit (HYG) is down significantly OR Volatility (VIXY) is up
+    if hyg_chg < -0.3 or vix_chg > 2.0:
         regime = "RISK OFF (DEFENSIVE)"
         color = "red"
         longs = ["DXY (Cash)", "VIX", "US10Y (Bonds)"]
         shorts = ["Tech", "Crypto", "Small Caps", "EM"]
-        alerts.append("⛔ CRITICAL: Credit spreads widening. VETO all long risk trades.")
+        alerts.append("⛔ CRITICAL: Credit spreads widening or Volatility spiking. VETO all long risk trades.")
     
     # 2. REFLATION (Growth + Yields Up)
+    # Commodities moving up + Yields rising = Inflation trade
     elif (oil_chg > 0.5 or copper_chg > 0.5) and us10y_chg > 1.0:
         regime = "REFLATION (INFLATIONARY GROWTH)"
         color = "orange"
         longs = ["Energy", "Banks", "Industrials", "Commodities"]
         shorts = ["Tech (Rate Sensitive)", "Bonds (TLT)"]
-        alerts.append("🔥 INFLATION PULSE: Commodities leading. Rotate from Tech to Energy.")
+        alerts.append("🔥 INFLATION PULSE: Commodities leading. Rotate from Tech to Energy/Industrials.")
 
     # 3. LIQUIDITY PUMP (Dollar Down, Crypto Up)
-    elif dxy_chg < -0.2 and btc_chg > 1.0:
+    elif dxy_chg < -0.1 and btc_chg > 1.0:
         regime = "LIQUIDITY PUMP (RISK ON)"
         color = "purple"
         longs = ["Bitcoin", "Nasdaq", "Gold", "Spec Tech"]
         shorts = ["DXY", "Cash"]
-        alerts.append("🌊 LIQUIDITY INJECTION: Dollar weak. Green light for High Beta.")
+        alerts.append("🌊 LIQUIDITY INJECTION: Dollar weak. Green light for High Beta Assets.")
 
     # 4. GOLDILOCKS (Vol down, Yields stable)
     elif vix_chg < 0 and abs(us10y_chg) < 2.0:
@@ -137,7 +146,7 @@ def analyze_market(data):
         color = "green"
         longs = ["S&P 500", "Tech", "Quality Growth"]
         shorts = ["VIX"]
-        alerts.append("✅ STABLE: Volatility is dropping. Buy the dip environment.")
+        alerts.append("✅ STABLE: Volatility is dropping. 'Buy the dip' environment.")
 
     return {
         'regime': regime,
@@ -152,21 +161,20 @@ def create_nexus_graph(market_data, regime_data):
     """Draws the interactive node graph using Plotly."""
     
     # Define Nodes (Positioning is manual for better layout)
-    # X, Y coordinates approximate the "Solar System" view
     nodes = {
         # Center (Gravity)
         'US10Y': {'pos': (0, 0), 'group': 'Rates', 'label': 'US 10Y'},
-        'DXY':   {'pos': (1, 1), 'group': 'Forex', 'label': 'USD (DXY)'},
+        'DXY':   {'pos': (1, 1), 'group': 'Forex', 'label': 'USD (UUP)'},
         
         # Inner Ring (Primary Assets)
         'SPY':   {'pos': (-1, 1), 'group': 'Equity', 'label': 'S&P 500'},
         'QQQ':   {'pos': (-1.5, 0.5), 'group': 'Equity', 'label': 'Nasdaq'},
-        'GOLD':  {'pos': (1, -1), 'group': 'Commodity', 'label': 'Gold'},
+        'GOLD':  {'pos': (1, -1), 'group': 'Commodity', 'label': 'Gold (GLD)'},
         'HYG':   {'pos': (-0.5, -1), 'group': 'Credit', 'label': 'Credit (HYG)'},
         
         # Outer Ring (High Beta / Macro Proxies)
         'BTC':   {'pos': (-2, 2), 'group': 'Crypto', 'label': 'Bitcoin'},
-        'OIL':   {'pos': (2, -0.5), 'group': 'Commodity', 'label': 'Oil'},
+        'OIL':   {'pos': (2, -0.5), 'group': 'Commodity', 'label': 'Oil (USO)'},
         'COPPER':{'pos': (1.5, -1.5), 'group': 'Commodity', 'label': 'Copper'},
         'IWM':   {'pos': (-1.5, -1.5), 'group': 'Equity', 'label': 'Russell 2000'},
     }
@@ -194,10 +202,7 @@ def create_nexus_graph(market_data, regime_data):
         edge_y.extend([y0, y1, None])
         # Color line based on simple logic or static definition
         col = 'rgba(239, 68, 68, 0.6)' if edge[2] == 'red' else 'rgba(34, 197, 94, 0.6)'
-        edge_colors.append(col) # Plotly handles line colors differently in complex traces, simplifying for robustness:
-    
-    # We use a single trace for lines for simplicity, but colored lines require split traces or advanced mapping.
-    # For this dashboard, we will use grey lines but color the NODES dynamically based on live data.
+        edge_colors.append(col)
 
     node_x = []
     node_y = []
@@ -216,6 +221,8 @@ def create_nexus_graph(market_data, regime_data):
         
         # Node Color Logic (Green if UP, Red if DOWN)
         # Exception: US10Y and DXY Up is usually "Red" for risk assets, but we color the node by its own price action here
+        # If DXY or US10Y are UP, let's color them RED to signify "Risk Off pressure" for easier visual reading?
+        # Actually, let's keep it simple: Green = Price Up, Red = Price Down.
         col = '#22c55e' if chg > 0 else '#ef4444'
         if chg == 0: col = '#6b7280'
         
@@ -263,7 +270,7 @@ def create_nexus_graph(market_data, regime_data):
 
 def main():
     # Load Data
-    with st.spinner('Fetching Live Market Data...'):
+    with st.spinner('Connecting to Global Markets...'):
         market_data = fetch_live_data()
         analysis = analyze_market(market_data)
 
@@ -274,7 +281,7 @@ def main():
         with st.expander("📖 The Daily Playbook", expanded=True):
             st.markdown("""
             **1. The Veto Check (Credit)**
-            Check `HYG`. If Red (> -0.3%), **STOP**. Do not buy dip.
+            Check `Credit (HYG)`. If Red (> -0.3%), **STOP**. Do not buy the dip.
             
             **2. The Regime Check**
             Look at the Dashboard. 
@@ -283,15 +290,15 @@ def main():
             * **Orange:** Buy Energy/Banks.
             
             **3. The Confirmation**
-            Before buying Gold, check `Real Yields`. They must be falling.
+            Before buying Gold, check `10Y Yields`. They must be falling.
             """)
             
         with st.expander("🧠 Deep Dives"):
-            st.info("**Why HYG Matters:** High Yield bonds are the 'canary in the coal mine'. Equity investors can be delusional, but bond investors care about getting paid back. If HYG falls, bankruptcy risk is rising.")
-            st.info("**Real Yields vs Gold:** Gold pays no interest. If Bonds pay 5% + Inflation, nobody wants Gold. Gold needs Yields to fall to shine.")
+            st.info("**Why HYG Matters:** High Yield bonds are the 'canary in the coal mine'. If HYG falls, bankruptcy risk is rising.")
+            st.info("**UUP vs DXY:** We use `UUP` as a proxy for the Dollar Index because it trades as an ETF and provides reliable data. If UUP is Green, the Dollar is getting stronger.")
 
         st.divider()
-        st.caption(f"Last updated: {datetime.datetime.now().strftime('%H:%M:%S')}")
+        st.caption(f"Last updated: {datetime.datetime.now().strftime('%H:%M:%S')} (ETF Proxies Used)")
         if st.button("Refresh Data"):
             st.cache_data.clear()
             st.rerun()
@@ -302,67 +309,80 @@ def main():
     # 1. MORNING BRIEFING (DASHBOARD)
     # Determine CSS class for header
     header_class = "risk-safe"
-    if "RISK OFF" in analysis['regime']: header_class = "risk-critical"
-    elif "REFLATION" in analysis['regime']: header_class = "risk-warning"
+    if analysis and "RISK OFF" in analysis['regime']: header_class = "risk-critical"
+    elif analysis and "REFLATION" in analysis['regime']: header_class = "risk-warning"
 
-    st.markdown(f"""
-    <div class="metric-card {header_class}">
-        <div class="metric-label">Current Market Regime</div>
-        <div class="metric-value">{analysis['regime']}</div>
-        <div style="margin-top: 10px; font-size: 14px;">
-            {' '.join([f"⚠️ {a}" for a in analysis['alerts']])}
+    if analysis:
+        st.markdown(f"""
+        <div class="metric-card {header_class}">
+            <div class="metric-label">Current Market Regime</div>
+            <div class="metric-value">{analysis['regime']}</div>
+            <div style="margin-top: 10px; font-size: 14px;">
+                {' '.join([f"⚠️ {a}" for a in analysis['alerts']])}
+            </div>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-    # 2. KEY METRICS ROW
-    c1, c2, c3, c4 = st.columns(4)
-    
-    def metric_html(label, ticker):
-        data = market_data.get(ticker, {})
-        val = data.get('price', 0)
-        chg = data.get('change', 0)
-        color = "#ef4444" if chg < 0 else "#22c55e"
-        # Inverse logic for VIX/US10Y
-        if ticker in ['VIX', 'US10Y', 'DXY']:
-            color = "#ef4444" if chg > 0 else "#22c55e" # Red if Up (Bad)
+        # 2. KEY METRICS ROW
+        c1, c2, c3, c4 = st.columns(4)
+        
+        def metric_html(label, ticker):
+            data = market_data.get(ticker, {})
+            val = data.get('price', 0)
+            chg = data.get('change', 0)
             
-        return f"""
-        <div class="metric-card" style="border-left-color: {color};">
-            <div class="metric-label">{label}</div>
-            <div class="metric-value">{val:.2f}</div>
-            <div class="metric-delta" style="color: {color};">{chg:+.2f}%</div>
-        </div>
-        """
+            color = "#ef4444" if chg < 0 else "#22c55e"
+            # Inverse logic for VIX/US10Y/DXY: Green is BAD for risk assets usually, but let's keep visual consistency:
+            # Green text = Price Went Up.
+            # However, for the BORDER (Risk indicator), we can be smarter.
+            border_color = color
+            if ticker in ['VIX', 'US10Y', 'DXY']:
+                # If these go UP (Green), it's a Warning (Orange/Red)
+                if chg > 0: border_color = "#ef4444" 
+                else: border_color = "#22c55e"
 
-    c1.markdown(metric_html("Credit (Veto)", "HYG"), unsafe_allow_html=True)
-    c2.markdown(metric_html("Volatility", "VIX"), unsafe_allow_html=True)
-    c3.markdown(metric_html("10Y Yields", "US10Y"), unsafe_allow_html=True)
-    c4.markdown(metric_html("Liquidity (BTC)", "BTC"), unsafe_allow_html=True)
+            return f"""
+            <div class="metric-card" style="border-left-color: {border_color};">
+                <div class="metric-label">{label}</div>
+                <div class="metric-value">{val:.2f}</div>
+                <div class="metric-delta" style="color: {color};">{chg:+.2f}%</div>
+            </div>
+            """
 
-    # 3. ACTION PLAN & GRAPH
-    col_left, col_right = st.columns([1, 2])
+        c1.markdown(metric_html("Credit (Veto)", "HYG"), unsafe_allow_html=True)
+        c2.markdown(metric_html("Volatility (VIXY)", "VIX"), unsafe_allow_html=True)
+        c3.markdown(metric_html("10Y Yields", "US10Y"), unsafe_allow_html=True)
+        c4.markdown(metric_html("Liquidity (BTC)", "BTC"), unsafe_allow_html=True)
 
-    with col_left:
-        st.subheader("🎯 Action Plan")
-        st.markdown("Based on live data:")
-        
-        st.success(f"**FOCUS (LONG):**\n\n{', '.join(analysis['longs'])}")
-        st.error(f"**AVOID (SHORT):**\n\n{', '.join(analysis['shorts'])}")
-        
-        st.markdown("---")
-        st.markdown("**Live Correlations:**")
-        if market_data['US10Y']['change'] > 0.5:
-            st.write("📉 Yields Spiking -> Tech/Gold Headwind")
-        if market_data['DXY']['change'] > 0.2:
-            st.write("📉 Dollar Strong -> Emerging Mkts Headwind")
-        if market_data['HYG']['change'] > 0.1:
-            st.write("📈 Credit Healthy -> Buying Dip Supported")
+        # 3. ACTION PLAN & GRAPH
+        col_left, col_right = st.columns([1, 2])
 
-    with col_right:
-        st.subheader("🌐 Live Correlation Nexus")
-        fig = create_nexus_graph(market_data, analysis)
-        st.plotly_chart(fig, use_container_width=True)
+        with col_left:
+            st.subheader("🎯 Action Plan")
+            st.markdown("Based on live data:")
+            
+            st.success(f"**FOCUS (LONG):**\n\n{', '.join(analysis['longs'])}")
+            st.error(f"**AVOID (SHORT):**\n\n{', '.join(analysis['shorts'])}")
+            
+            st.markdown("---")
+            st.markdown("**Live Correlations:**")
+            
+            # Safe getters
+            def get_chg(k): return market_data.get(k, {}).get('change', 0)
+            
+            if get_chg('US10Y') > 0.5:
+                st.write("📉 Yields Spiking -> Tech/Gold Headwind")
+            if get_chg('DXY') > 0.2:
+                st.write("📉 Dollar Strong -> Emerging Mkts Headwind")
+            if get_chg('HYG') > 0.1:
+                st.write("📈 Credit Healthy -> Buying Dip Supported")
+
+        with col_right:
+            st.subheader("🌐 Live Correlation Nexus")
+            fig = create_nexus_graph(market_data, analysis)
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.error("Unable to load market data. Please refresh.")
 
 if __name__ == "__main__":
     main()
