@@ -36,6 +36,12 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { gap: 20px; border-bottom: 1px solid #2e3039; }
     .stTabs [data-baseweb="tab"] { height: 50px; font-weight: 600; font-size: 14px; }
     .regime-badge { padding: 15px; border-radius: 8px; text-align: center; border: 1px solid; margin-bottom: 20px; background: #1e2127; }
+    
+    /* Rotation Quadrant Colors */
+    .quad-leading { border-left: 3px solid #22c55e; padding-left: 10px; background: rgba(34, 197, 94, 0.1); border-radius: 0 4px 4px 0; }
+    .quad-improving { border-left: 3px solid #3b82f6; padding-left: 10px; background: rgba(59, 130, 246, 0.1); border-radius: 0 4px 4px 0; }
+    .quad-weakening { border-left: 3px solid #f59e0b; padding-left: 10px; background: rgba(245, 158, 11, 0.1); border-radius: 0 4px 4px 0; }
+    .quad-lagging { border-left: 3px solid #ef4444; padding-left: 10px; background: rgba(239, 68, 68, 0.1); border-radius: 0 4px 4px 0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -161,7 +167,7 @@ def analyze_market(data):
         desc = "Credit Stress or Volatility Spike. Cash is King."
         color_code = "#ef4444" # Red
         longs = ["Cash (UUP)", "Vol (VIX)"]
-        shorts = ["Tech", "Crypto", "Small Caps", "EM", "High Yield"]
+        shorts = ["Tech", "Crypto", "Small Caps", "High Yield"]
         alerts.append("⛔ CREDIT VETO: HYG Breaking Down. Stop all long risk.")
 
     # 2. REFLATION (Growth + Yields + Banks)
@@ -312,6 +318,8 @@ def create_rrg_scatter(df, title, x_label, y_label, range_val=5):
     pos = range_val * 0.7
     fig.add_annotation(x=pos, y=pos, text="LEADING", showarrow=False, font=dict(color="#22c55e", size=12))
     fig.add_annotation(x=-pos, y=-pos, text="LAGGING", showarrow=False, font=dict(color="#ef4444", size=12))
+    fig.add_annotation(x=-pos, y=pos, text="IMPROVING", showarrow=False, font=dict(color="#3b82f6", size=10))
+    fig.add_annotation(x=pos, y=-pos, text="WEAKENING", showarrow=False, font=dict(color="#f59e0b", size=10))
     
     fig.update_traces(textposition='top center', marker=dict(size=14, line=dict(width=1, color='white')))
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'),
@@ -431,7 +439,7 @@ def main():
                 label_y = "Daily Momentum" if timeframe == "Daily (Tactical)" else "Weekly Momentum"
                 st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", label_x, label_y, range_val=zoom), use_container_width=True)
             with col_macro:
-                st.markdown("##### 🌍 Asset Momentum Quadrant")
+                st.markdown("##### 🌍 Macro Asset Momentum Quadrant")
                 st.plotly_chart(create_rrg_scatter(df_macro_q, "Asset Rotation", label_x, label_y, range_val=zoom*2), use_container_width=True)
             
             st.markdown("---")
