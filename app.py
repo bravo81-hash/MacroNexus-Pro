@@ -44,18 +44,15 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { height: 50px; font-weight: 600; font-size: 14px; }
     .regime-badge { padding: 15px; border-radius: 8px; text-align: center; border: 1px solid; margin-bottom: 20px; background: #1e2127; }
     
-    /* Rotation Styling */
-    .rotation-card {
-        background-color: #1e2127;
-        padding: 15px;
-        border-radius: 8px;
-        border: 1px solid #2e3039;
-        margin-bottom: 10px;
-    }
+    /* Rotation Quadrant Colors */
+    .quad-leading { border-left: 3px solid #22c55e; padding-left: 10px; }
+    .quad-improving { border-left: 3px solid #3b82f6; padding-left: 10px; }
+    .quad-weakening { border-left: 3px solid #f59e0b; padding-left: 10px; }
+    .quad-lagging { border-left: 3px solid #ef4444; padding-left: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. FULL DATA UNIVERSE (EXPANDED FOR ROTATION) ---
+# --- 1. FULL DATA UNIVERSE ---
 TICKERS = {
     # DRIVERS
     'US10Y': '^TNX',       # 10Y Yield
@@ -108,7 +105,7 @@ def fetch_live_data():
             if not hist_clean.empty and len(hist_clean) >= 2:
                 current = hist_clean.iloc[-1]
                 prev_day = hist_clean.iloc[-2]
-                # Get 5-day ago price for weekly rotation
+                # Get 5-day ago price for weekly rotation (Trend)
                 prev_week = hist_clean.iloc[-6] if len(hist_clean) >= 6 else prev_day
                 
                 if key == 'US10Y':
@@ -220,76 +217,88 @@ def analyze_market(data):
         'longs': longs, 'shorts': shorts, 'alerts': alerts
     }
 
-# --- 3. ROTATION ANALYSIS ---
-def analyze_rotation(data, timeframe='change'):
+# --- 3. ROTATION ANALYSIS (QUADRANT LOGIC) ---
+def analyze_quadrant_rotation(data):
     """
-    Analyzes flows between asset classes and sectors.
-    timeframe: 'change' (Daily) or 'change_w' (Weekly)
+    Categorizes assets into 4 Quadrants:
+    1. LEADING (Up Week / Up Day) -> Momentum Buy
+    2. WEAKENING (Up Week / Down Day) -> Profit Taking / Watch
+    3. LAGGING (Down Week / Down Day) -> Avoid / Short
+    4. IMPROVING (Down Week / Up Day) -> Reversal / Swing Buy
     """
-    def get_val(k): return data.get(k, {}).get(timeframe, 0)
-
-    # 1. ASSET CLASS ROTATION
-    classes = {
-        'Equities': (get_val('SPY') + get_val('QQQ') + get_val('IWM')) / 3,
-        'Bonds': get_val('TLT'),
-        'Commodities': (get_val('OIL') + get_val('GOLD') + get_val('COPPER')) / 3,
-        'Crypto': get_val('BTC'),
-        'Cash/USD': get_val('DXY')
-    }
-    sorted_classes = sorted(classes.items(), key=lambda x: x[1], reverse=True)
+    quadrants = {'LEADING': [], 'WEAKENING': [], 'LAGGING': [], 'IMPROVING': []}
+    scatter_data = []
     
-    # 2. SECTOR ROTATION
-    sectors = {
-        'Tech': get_val('TECH'), 'Semis': get_val('SEMIS'), 'Banks': get_val('BANKS'),
-        'Energy': get_val('ENERGY'), 'Home': get_val('HOME'), 'Util': get_val('UTIL'),
-        'Ind': get_val('IND'), 'Staples': get_val('STAPLES'), 'Disc': get_val('DISC'),
-        'Health': get_val('HEALTH'), 'Mat': get_val('MAT'), 'Comm': get_val('COMM'), 'RE': get_val('RE')
-    }
-    sorted_sectors = sorted(sectors.items(), key=lambda x: x[1], reverse=True)
-
-    # 3. INTERPRETATION
-    winner_sector = sorted_sectors[0][0]
-    loser_sector = sorted_sectors[-1][0]
+    # Filter for tradable assets/sectors (exclude drivers)
+    target_keys = [k for k in TICKERS.keys() if k not in ['US10Y', 'VIX', 'HYG', 'DXY', 'TIP']]
     
-    rotation_theme = "Mixed / Churn"
-    action = "Wait for clarity"
-    
-    # Defensive Logic
-    defensives = ['Util', 'Staples', 'Health']
-    cyclicals = ['Energy', 'Mat', 'Ind', 'Banks']
-    growth = ['Tech', 'Semis', 'Disc', 'Comm']
-    
-    if winner_sector in defensives and loser_sector in growth:
-        rotation_theme = "DEFENSIVE ROTATION (Risk Off)"
-        action = "Sell Beta, Buy Quality/Divs or Cash"
-    elif winner_sector in cyclicals and loser_sector in defensives:
-        rotation_theme = "CYCLICAL ROTATION (Reflation)"
-        action = "Buy Value/Real Assets"
-    elif winner_sector in growth and loser_sector in defensives:
-        rotation_theme = "GROWTH ROTATION (Risk On)"
-        action = "Buy Tech/Nasdaq"
+    for k in target_keys:
+        d = data.get(k, {})
+        day_chg = d.get('change', 0)
+        week_chg = d.get('change_w', 0)
         
-    return sorted_classes, sorted_sectors, rotation_theme, action
+        # Determine Quadrant
+        if week_chg > 0 and day_chg > 0:
+            quad = 'LEADING'
+            color = '#22c55e' # Green
+        elif week_chg > 0 and day_chg < 0:
+            quad = 'WEAKENING'
+            color = '#f59e0b' # Orange
+        elif week_chg < 0 and day_chg < 0:
+            quad = 'LAGGING'
+            color = '#ef4444' # Red
+        else:
+            quad = 'IMPROVING'
+            color = '#3b82f6' # Blue
+            
+        quadrants[quad].append(k)
+        scatter_data.append({
+            'Asset': k,
+            'Symbol': d.get('symbol', k),
+            'Daily': day_chg,
+            'Weekly': week_chg,
+            'Quadrant': quad,
+            'Color': color
+        })
+        
+    return quadrants, pd.DataFrame(scatter_data)
 
 # --- 4. VISUALIZATION COMPONENTS ---
-def create_rotation_chart(data_list, title):
-    df = pd.DataFrame(data_list, columns=['Asset', 'Change'])
-    df['Color'] = df['Change'].apply(lambda x: '#22c55e' if x > 0 else '#ef4444')
+def create_rotation_scatter(df):
+    if df.empty: return go.Figure()
     
-    fig = px.bar(df, x='Change', y='Asset', orientation='h', text_auto='.2f', title=title)
-    fig.update_traces(marker_color=df['Color'], textfont_size=12, textposition='outside')
+    fig = px.scatter(
+        df, x='Weekly', y='Daily', color='Color', text='Asset',
+        hover_data=['Symbol', 'Quadrant'],
+        title='<b>Market Rotation (RRG Proxy)</b><br><sup>X: Trend (Weekly) | Y: Momentum (Daily)</sup>',
+        color_discrete_map="identity"
+    )
+    
+    # Add Quadrant Lines
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+    fig.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.5)
+    
+    # Add Quadrant Labels
+    fig.add_annotation(x=3, y=3, text="LEADING (Trend + Mom)", showarrow=False, font=dict(color="#22c55e", size=10))
+    fig.add_annotation(x=-3, y=-3, text="LAGGING (Avoid)", showarrow=False, font=dict(color="#ef4444", size=10))
+    fig.add_annotation(x=-3, y=3, text="IMPROVING (Reversal)", showarrow=False, font=dict(color="#3b82f6", size=10))
+    fig.add_annotation(x=3, y=-3, text="WEAKENING (Profit Take)", showarrow=False, font=dict(color="#f59e0b", size=10))
+
+    fig.update_traces(textposition='top center', marker=dict(size=12, line=dict(width=1, color='white')))
+    
     fig.update_layout(
-        yaxis={'categoryorder':'total ascending'},
-        xaxis_title="% Change",
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='white'),
-        height=400,
-        margin=dict(l=10, r=10, t=40, b=10)
+        xaxis=dict(title="5-Day Change (%)", zeroline=False),
+        yaxis=dict(title="1-Day Change (%)", zeroline=False),
+        height=500,
+        showlegend=False
     )
     return fig
 
 def create_nexus_graph(market_data):
+    # Standard Node Graph (Kept simple for consistency)
     nodes = {
         'US10Y': {'pos': (0, 0), 'label': 'Rates'},
         'DXY':   {'pos': (0.8, 0.8), 'label': 'Dollar'},
@@ -308,7 +317,14 @@ def create_nexus_graph(market_data):
         'XLF':   {'pos': (1.5, -1.0), 'label': 'Banks'},
         'VIX':   {'pos': (0, 1.5), 'label': 'Vol'}
     }
-    edges = [('US10Y','QQQ'), ('US10Y','GOLD'), ('US10Y','XHB'), ('DXY','GOLD'), ('DXY','OIL'), ('DXY','EEM'), ('HYG','SPY'), ('HYG','IWM'), ('HYG','XLF'), ('QQQ','BTC'), ('QQQ','SMH'), ('COPPER','US10Y'), ('OIL','XLE'), ('VIX','SPY')]
+    
+    edges = [
+        ('US10Y', 'QQQ'), ('US10Y', 'GOLD'), ('US10Y', 'XHB'),
+        ('DXY', 'GOLD'), ('DXY', 'OIL'), ('DXY', 'EEM'),
+        ('HYG', 'SPY'), ('HYG', 'IWM'), ('HYG', 'XLF'),
+        ('QQQ', 'BTC'), ('QQQ', 'SMH'),
+        ('COPPER', 'US10Y'), ('OIL', 'XLE'), ('VIX', 'SPY')
+    ]
     
     edge_x, edge_y = [], []
     for u, v in edges:
@@ -379,34 +395,53 @@ def main():
         with c_a:
             bg = analysis['color']
             st.markdown(f"""<div class="regime-badge" style="background-color: {bg}22; border-color: {bg};"><div style="color: {bg}; font-weight: bold; font-size: 20px; margin-bottom: 5px;">{analysis['regime']}</div><div style="font-size: 11px; color: #ccc;">{analysis['desc']}</div></div>""", unsafe_allow_html=True)
-            st.success("**LONG**"); [st.markdown(f"<small>{item}</small>", unsafe_allow_html=True) for item in analysis['longs']]
-            st.error("**AVOID**"); [st.markdown(f"<small>{item}</small>", unsafe_allow_html=True) for item in analysis['shorts']]
+            
+            # FIXED DISPLAY BUG: Standard Loop
+            st.success("**LONG**")
+            for item in analysis['longs']:
+                st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True)
+            
+            st.error("**AVOID**")
+            for item in analysis['shorts']:
+                st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True)
+            
             if analysis['alerts']: st.error(analysis['alerts'][0], icon="🚨")
 
     with t2:
         # --- ROTATION TAB ---
-        col_ctrl, col_charts = st.columns([1, 4])
-        with col_ctrl:
-            st.markdown("#### ⚙️ Settings")
-            timeframe = st.radio("Timeframe", ["Daily (1D)", "Weekly (5D)"])
-            tf_key = 'change' if timeframe == "Daily (1D)" else 'change_w'
+        st.markdown("### 🔄 Sector & Asset Rotation (Quadrant Analysis)")
+        st.info("Top Right = Strongest Trend + Momentum (Chase). Bottom Left = Weakest (Short).")
+        
+        quads, df_scat = analyze_quadrant_rotation(market_data)
+        
+        col_plot, col_action = st.columns([3, 1])
+        
+        with col_plot:
+            st.plotly_chart(create_rotation_scatter(df_scat), use_container_width=True)
             
-            # Rotation Analysis
-            sorted_classes, sorted_sectors, theme, action = analyze_rotation(market_data, tf_key)
+        with col_action:
+            st.markdown("#### 🎯 Rotation Targets")
             
-            st.markdown("---")
-            st.markdown("#### 🧠 Insight")
-            st.info(f"**Theme:** {theme}")
-            st.success(f"**Action:** {action}")
-            
-        with col_charts:
-            c1, c2 = st.columns(2)
-            with c1:
-                st.plotly_chart(create_rotation_chart(sorted_classes, "Asset Class Rotation (Flows)"), use_container_width=True)
-            with c2:
-                st.plotly_chart(create_rotation_chart(sorted_sectors, "Sector Rotation (Equities)"), use_container_width=True)
+            with st.container():
+                st.markdown("**🚀 LEADING (Buy/Hold)**")
+                if quads['LEADING']:
+                    for item in quads['LEADING']: st.markdown(f"<div class='quad-leading'>{item}</div>", unsafe_allow_html=True)
+                else: st.caption("None")
                 
-            st.caption("Bars show relative performance. Money flows **FROM** Red (Losers) **TO** Green (Winners).")
+                st.markdown("**🔵 IMPROVING (Watch)**")
+                if quads['IMPROVING']:
+                    for item in quads['IMPROVING']: st.markdown(f"<div class='quad-improving'>{item}</div>", unsafe_allow_html=True)
+                else: st.caption("None")
+                
+                st.markdown("**🟠 WEAKENING (Trim)**")
+                if quads['WEAKENING']:
+                    for item in quads['WEAKENING']: st.markdown(f"<div class='quad-weakening'>{item}</div>", unsafe_allow_html=True)
+                else: st.caption("None")
+                
+                st.markdown("**🔴 LAGGING (Short/Avoid)**")
+                if quads['LAGGING']:
+                    for item in quads['LAGGING']: st.markdown(f"<div class='quad-lagging'>{item}</div>", unsafe_allow_html=True)
+                else: st.caption("None")
 
     with t3: st.plotly_chart(create_heatmap_matrix(), use_container_width=True)
 
