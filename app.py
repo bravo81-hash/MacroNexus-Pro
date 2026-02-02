@@ -71,7 +71,6 @@ TICKERS = {
     'BTC': 'BTC-USD', 'ETH': 'ETH-USD', 'SOL': 'SOL-USD', 'EURO': 'FXE', 'YEN': 'FXY'
 }
 
-# Fallbacks
 FALLBACKS = {'DXY': 'UUP', 'VIX': 'VIXY'}
 
 @st.cache_data(ttl=300)
@@ -80,38 +79,46 @@ def fetch_live_data():
     for key, symbol in TICKERS.items():
         try:
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="15d") 
+            # Fetch 3 months to get Monthly Trend (20d) and Weekly (5d) and Daily (1d)
+            hist = ticker.history(period="3mo") 
             
             if hist.empty and key in FALLBACKS:
                 symbol = FALLBACKS[key]
                 ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="15d")
+                hist = ticker.history(period="3mo")
             
             hist_clean = hist['Close'].dropna()
 
-            if not hist_clean.empty and len(hist_clean) >= 6: 
+            if not hist_clean.empty and len(hist_clean) >= 22: 
                 current = hist_clean.iloc[-1]
                 prev_day = hist_clean.iloc[-2]
-                prev_week = hist_clean.iloc[-6] 
+                prev_week = hist_clean.iloc[-6]  # 5 trading days ago
+                prev_month = hist_clean.iloc[-21] # 20 trading days ago
                 
                 if key == 'US10Y':
+                    # Basis Points for Yields
                     change_d = (current - prev_day) * 10
                     change_w = (current - prev_week) * 10
+                    change_m = (current - prev_month) * 10
                 else:
+                    # Percent Change for Assets
                     change_d = ((current - prev_day) / prev_day) * 100
                     change_w = ((current - prev_week) / prev_week) * 100
+                    change_m = ((current - prev_month) / prev_month) * 100
                     
                 data_map[key] = {
                     'price': current, 
                     'change': change_d, 
                     'change_w': change_w,
+                    'change_m': change_m,
                     'symbol': symbol, 
                     'error': False
                 }
             else:
-                raise ValueError("Insufficient data")
+                # Fallback for insufficient data
+                data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'change_m': 0.0, 'symbol': symbol, 'error': True, 'msg': "Insuff Data"}
         except Exception as e:
-            data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'symbol': symbol, 'error': True, 'msg': str(e)}
+            data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'change_m': 0.0, 'symbol': symbol, 'error': True, 'msg': str(e)}
     return data_map
 
 # --- 2. LOGIC ENGINE ---
@@ -122,72 +129,117 @@ def analyze_market(data):
     hyg, vix, oil, cop, us10y, dxy, btc = get_c('HYG'), get_c('VIX'), get_c('OIL'), get_c('COPPER'), get_c('US10Y'), get_c('DXY'), get_c('BTC')
     banks = get_c('BANKS')
 
-    regime, desc, color_code = "NEUTRAL", "No clear macro dominance. Follow price momentum.", "#6b7280"
-    longs, shorts, alerts = [], [], []
+    regime, desc, color_code = "NEUTRAL", "No clear macro dominance. Follow momentum.", "#6b7280"
+    target_sectors = []
+    avoid_sectors = []
+    alerts = []
 
+    # 1. RISK OFF (The Veto)
     if hyg < -0.5 or vix > 5.0:
         regime = "RISK OFF"
         desc = "Credit Stress or Vol Spike. Cash is King."
         color_code = "#ef4444" # Red
-        longs = ["Cash (UUP)", "Vol (VIX)"]; shorts = ["Tech", "Crypto", "High Yield"]
+        target_sectors = ["VOLATILITY", "USD", "BONDS"]
+        avoid_sectors = ["TECH", "CRYPTO", "HIGH YIELD", "SMALL CAPS"]
         alerts.append("⛔ CREDIT VETO: Risk assets unsafe.")
+    
+    # 2. REFLATION (Growth + Yields + Banks)
     elif (oil > 1.5 or cop > 1.5) and us10y > 5.0 and banks > 0:
         regime = "REFLATION"
         desc = "Growth + Inflation rising. Real assets outperform."
         color_code = "#f59e0b" # Orange
-        longs = ["Energy", "Banks", "Industrials"]; shorts = ["Bonds", "Tech"]
-        alerts.append("🔥 INFLATION: Rotate to Cyclicals.")
+        target_sectors = ["ENERGY", "BANKS", "INDUSTRIALS", "COMMODITIES"]
+        avoid_sectors = ["BONDS", "TECH (Rate Sensitive)", "UTILITIES"]
+        alerts.append("🔥 INFLATION PULSE: Rotate to Cyclicals.")
+    
+    # 3. LIQUIDITY PUMP (Risk On)
     elif dxy < -0.2 and btc > 2.0:
         regime = "LIQUIDITY PUMP"
-        desc = "Dollar weak, Beta running."
+        desc = "Dollar weakness fueling high-beta assets."
         color_code = "#a855f7" # Purple
-        longs = ["Bitcoin", "Nasdaq", "Semis"]; shorts = ["Dollar", "Defensives"]
-        alerts.append("🌊 LIQUIDITY: Green light for Beta.")
+        target_sectors = ["CRYPTO", "TECH", "SEMIS", "GOLD"]
+        avoid_sectors = ["USD", "DEFENSIVES"]
+        alerts.append("🌊 LIQUIDITY ON: Green light for Beta.")
+    
+    # 4. GOLDILOCKS (Stability)
     elif vix < 0 and abs(us10y) < 5.0 and hyg > -0.1:
         regime = "GOLDILOCKS"
-        desc = "Low vol, stable rates."
+        desc = "Low vol, stable rates. Favorable for equities."
         color_code = "#22c55e" # Green
-        longs = ["S&P 500", "Tech", "Quality"]; shorts = ["Volatility"]
+        target_sectors = ["TECH", "SEMIS", "HOMEBUILDERS", "SMALL CAPS"]
+        avoid_sectors = ["VOLATILITY"]
         alerts.append("✅ STABLE: Buy Dips.")
 
-    if not longs and regime == "NEUTRAL":
-        asset_keys = ['SPY', 'QQQ', 'IWM', 'BTC', 'GOLD', 'OIL', 'COPPER', 'BANKS', 'ENERGY', 'SEMIS']
-        sorted_assets = sorted([(k, get_c(k)) for k in asset_keys], key=lambda x: x[1], reverse=True)
-        top = sorted_assets[0]; bot = sorted_assets[-1]
+    return {
+        'regime': regime, 'desc': desc, 'color': color_code,
+        'targets': target_sectors, 'avoids': avoid_sectors, 'alerts': alerts
+    }
+
+# --- 3. SWING SCOUTER ENGINE ---
+def analyze_swing_opportunities(data, analysis):
+    """
+    Cross-references Macro Regime with Technical Trend.
+    Returns specific tickers to Watch for the 3:00 PM close.
+    """
+    long_candidates = []
+    short_candidates = []
+    
+    # Define Asset/Sector Mapping for Regimes
+    # Maps internal ID to grouping for regime filtering
+    sector_map = {
+        'TECH': ['TECH', 'SEMIS', 'QQQ'],
+        'CRYPTO': ['BTC', 'ETH', 'SOL'],
+        'ENERGY': ['ENERGY', 'OIL'],
+        'BANKS': ['BANKS'],
+        'COMMODITIES': ['GOLD', 'SILVER', 'COPPER', 'AG'],
+        'DEFENSIVES': ['UTIL', 'STAPLES', 'HEALTH'],
+        'BONDS': ['TLT'],
+        'USD': ['DXY'],
+        'VOLATILITY': ['VIX']
+    }
+    
+    # Helper to check if asset fits current regime targets
+    def fits_regime(asset_key, target_list):
+        if not target_list: return True # If Neutral, everything fair game based on momentum
+        for target in target_list:
+            # Check if asset key is in the mapped group
+            if asset_key in sector_map.get(target, [target]):
+                return True
+        return False
+
+    # Scan All Tradable Assets
+    tradable = [k for k in TICKERS.keys() if k not in ['US10Y', 'HYG', 'VIX', 'TIP']] # Exclude drivers
+    
+    for k in tradable:
+        d = data.get(k, {})
+        d_chg = d.get('change', 0)
+        w_chg = d.get('change_w', 0)
+        m_chg = d.get('change_m', 0)
         
-        longs = [f"{top[0]} ({top[1]:.1f}%)"] if top[1] > 0.3 else ["Cash"]
-        shorts = [f"{bot[0]} ({bot[1]:.1f}%)"] if bot[1] < -0.3 else ["None"]
-
-    return {'regime': regime, 'desc': desc, 'color': color_code, 'longs': longs, 'shorts': shorts, 'alerts': alerts}
-
-# --- 3. ROTATION ENGINE (ENHANCED) ---
-def analyze_rotation_specifics(data, period='change'):
-    def get_p(k): return data.get(k, {}).get(period, 0)
-    
-    sector_keys = ['TECH', 'SEMIS', 'BANKS', 'ENERGY', 'HOME', 'UTIL', 'HEALTH', 'IND', 'MAT', 'COMM', 'DISC', 'STAPLES', 'RE']
-    sectors = [{'id': k, 'val': get_p(k), 'group': 'Sector'} for k in sector_keys]
-    df_sec = pd.DataFrame(sectors).sort_values('val', ascending=False)
-    
-    asset_keys = ['GOLD', 'BTC', 'OIL', 'TLT', 'SPY', 'DXY', 'EEM']
-    assets = [{'id': k, 'val': get_p(k), 'group': 'Asset'} for k in asset_keys]
-    df_ast = pd.DataFrame(assets).sort_values('val', ascending=False)
-    
-    winner_sec = df_sec.iloc[0]['id']; loser_sec = df_sec.iloc[-1]['id']
-    narrative = f"Money is moving from **{loser_sec}** to **{winner_sec}**."
-    implication = "Market is directionless."
-    
-    defensives = ['UTIL', 'STAPLES', 'HEALTH', 'RE']
-    cyclicals = ['ENERGY', 'BANKS', 'IND', 'MAT']
-    growth = ['TECH', 'SEMIS', 'DISC', 'COMM']
-    
-    if winner_sec in defensives: implication = "🛡️ **DEFENSIVE ROTATION:** Fear is rising. Capital hiding in safety."
-    elif winner_sec in cyclicals: implication = "⚙️ **CYCLICAL ROTATION:** Betting on economic growth/inflation."
-    elif winner_sec in growth: implication = "🚀 **GROWTH ROTATION:** Risk appetite is high."
+        # BUY SETUP:
+        # 1. Asset fits Regime Target (e.g. Energy in Reflation)
+        # 2. Technicals: Strong Weekly Trend OR Reversal (Day Up + Month Up)
+        if fits_regime(k, analysis['targets']):
+            if w_chg > 0 and d_chg > 0:
+                long_candidates.append({'id': k, 'type': '🚀 Momentum', 'val': d_chg})
+            elif m_chg > 0 and d_chg > 0:
+                 long_candidates.append({'id': k, 'type': '🔄 Trend Join', 'val': d_chg})
         
-    return df_sec, df_ast, narrative, implication
+        # SELL SETUP:
+        # 1. Asset fits Regime Avoid (e.g. Tech in Reflation)
+        # 2. Technicals: Weak Trend
+        if fits_regime(k, analysis['avoids']):
+             if w_chg < 0 and d_chg < 0:
+                short_candidates.append({'id': k, 'type': '📉 Breakdown', 'val': d_chg})
 
-def analyze_quadrant_data(data, period_key):
-    # RRG Logic: Separated into two datasets for cleaner charts
+    # Sort by strength
+    long_candidates = sorted(long_candidates, key=lambda x: x['val'], reverse=True)[:5]
+    short_candidates = sorted(short_candidates, key=lambda x: x['val'])[:5]
+    
+    return long_candidates, short_candidates
+
+def analyze_quadrant_data(data, view_type):
+    # RRG Logic Fix for Weekly View
     points_sectors = []
     points_macro = []
     
@@ -196,13 +248,15 @@ def analyze_quadrant_data(data, period_key):
     
     for k in sector_list + macro_list:
         d = data.get(k, {})
-        w = d.get('change_w', 0)
-        d_chg = d.get('change', 0)
         
-        # Use selected period as the "Momentum" (Y-Axis)
-        # Use Weekly as "Trend" (X-Axis) unless we are looking at daily
-        y_val = d.get(period_key, 0)
-        x_val = d.get('change_w', 0) # X is always Structural Trend (Weekly)
+        if view_type == 'Daily (Tactical)':
+            # X = Weekly Trend, Y = Daily Momentum
+            x_val = d.get('change_w', 0)
+            y_val = d.get('change', 0)
+        else: # Weekly (Structural)
+            # X = Monthly Trend, Y = Weekly Momentum
+            x_val = d.get('change_m', 0)
+            y_val = d.get('change_w', 0)
         
         quad = 'IMPROVING'
         color = '#3b82f6'
@@ -218,27 +272,39 @@ def analyze_quadrant_data(data, period_key):
     return pd.DataFrame(points_sectors), pd.DataFrame(points_macro)
 
 # --- 4. VISUALIZATION COMPONENTS ---
-def create_sankey_flow(df, title_prefix):
+def create_sankey_flow(data, period_key):
+    # Calculate Winners/Losers based on selected period
+    items = []
+    keys = [k for k in TICKERS.keys() if k not in ['US10Y', 'HYG', 'VIX', 'TIP']]
+    for k in keys:
+        items.append({'id': k, 'val': data.get(k, {}).get(period_key, 0)})
+    
+    df = pd.DataFrame(items).sort_values('val', ascending=False)
     winners = df.head(3)
     losers = df.tail(3).sort_values('val', ascending=True)
-    total_flow = winners['val'].sum() + abs(losers['val'].sum())
     
     labels = list(losers['id']) + list(winners['id'])
     sources, targets, values, colors = [], [], [], []
     
-    for i, loser_row in losers.iterrows():
-        idx_src = list(losers['id']).index(loser_row['id'])
-        for j, winner_row in winners.iterrows():
-            idx_tgt = len(losers) + list(winners['id']).index(winner_row['id'])
-            weight = (abs(loser_row['val']) * winner_row['val']) / total_flow * 10
-            sources.append(idx_src); targets.append(idx_tgt); values.append(weight); colors.append('rgba(75, 85, 99, 0.5)')
+    # Map flow
+    for i, loser in losers.iterrows():
+        src_idx = list(losers['id']).index(loser['id'])
+        for j, winner in winners.iterrows():
+            tgt_idx = len(losers) + list(winners['id']).index(winner['id'])
+            # Visual weight
+            val = (abs(loser['val']) + winner['val']) / 2
+            sources.append(src_idx); targets.append(tgt_idx); values.append(val); colors.append('rgba(75, 85, 99, 0.4)')
 
     node_colors = ['#ef4444'] * len(losers) + ['#22c55e'] * len(winners)
-    fig = go.Figure(data=[go.Sankey(node = dict(pad = 15, thickness = 20, line = dict(color = "black", width = 0.5), label = labels, color = node_colors), link = dict(source = sources, target = targets, value = values, color = colors))])
-    fig.update_layout(title_text=f"<b>{title_prefix} Flow</b>", font=dict(size=12, color='white'), paper_bgcolor='rgba(0,0,0,0)', height=350, margin=dict(l=10, r=10, t=40, b=10))
+    
+    fig = go.Figure(data=[go.Sankey(
+        node = dict(pad = 15, thickness = 20, line = dict(color = "black", width = 0.5), label = labels, color = node_colors),
+        link = dict(source = sources, target = targets, value = values, color = colors)
+    )])
+    fig.update_layout(title_text=f"<b>Money Flow (Top Losers → Top Winners)</b>", font=dict(size=12, color='white'), paper_bgcolor='rgba(0,0,0,0)', height=300, margin=dict(l=10, r=10, t=40, b=10))
     return fig
 
-def create_rrg_scatter(df, title, range_val=5):
+def create_rrg_scatter(df, title, x_label, y_label, range_val=5):
     if df.empty: return go.Figure()
     
     fig = px.scatter(df, x='x', y='y', text='id', color='color', 
@@ -247,7 +313,7 @@ def create_rrg_scatter(df, title, range_val=5):
     
     fig.add_hline(y=0, line_dash="dot", line_color="gray"); fig.add_vline(x=0, line_dash="dot", line_color="gray")
     
-    # Quadrant Labels - Adjusted based on zoom
+    # Quadrant Labels
     pos = range_val * 0.7
     fig.add_annotation(x=pos, y=pos, text="LEADING", showarrow=False, font=dict(color="#22c55e", size=12))
     fig.add_annotation(x=-pos, y=-pos, text="LAGGING", showarrow=False, font=dict(color="#ef4444", size=12))
@@ -257,8 +323,8 @@ def create_rrg_scatter(df, title, range_val=5):
     fig.update_traces(textposition='top center', marker=dict(size=14, line=dict(width=1, color='white')))
     fig.update_layout(
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'),
-        xaxis=dict(title="Trend (Weekly)", zeroline=False, range=[-range_val, range_val]), 
-        yaxis=dict(title="Momentum (Selected Period)", zeroline=False, range=[-range_val, range_val]),
+        xaxis=dict(title=x_label, zeroline=False, range=[-range_val, range_val]), 
+        yaxis=dict(title=y_label, zeroline=False, range=[-range_val, range_val]),
         showlegend=False, height=450
     )
     return fig
@@ -315,6 +381,9 @@ def main():
         market_data = fetch_live_data()
         analysis = analyze_market(market_data)
         
+        # Swing Scouter Logic
+        longs_scout, shorts_scout = analyze_swing_opportunities(market_data, analysis)
+
     st.markdown("### 📡 Market Pulse")
     if analysis and analysis['regime'] == 'DATA ERROR': st.error(analysis['desc'], icon="🚨")
     
@@ -342,52 +411,55 @@ def main():
         with c_a:
             bg = analysis['color']
             st.markdown(f"""<div class="regime-badge" style="background-color: {bg}22; border-color: {bg};"><div style="color: {bg}; font-weight: bold; font-size: 20px; margin-bottom: 5px;">{analysis['regime']}</div><div style="font-size: 11px; color: #ccc;">{analysis['desc']}</div></div>""", unsafe_allow_html=True)
-            st.success("**LONG**")
             
-            # FIXED DISPLAY BUG: Standard Loops
-            for item in analysis['longs']:
-                st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True)
+            st.markdown("#### 🕵️ Swing Scouter")
+            st.caption(f"Candidates aligned with {analysis['regime']} regime.")
             
-            st.error("**AVOID**")
-            for item in analysis['shorts']:
-                st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True)
+            if longs_scout:
+                st.success("**LONG WATCH**")
+                for item in longs_scout:
+                    st.markdown(f"**{item['id']}**: {item['type']} ({item['val']:+.2f}%)")
+            else:
+                st.info("No longs fit criteria")
                 
+            if shorts_scout:
+                st.error("**SHORT WATCH**")
+                for item in shorts_scout:
+                    st.markdown(f"**{item['id']}**: {item['type']} ({item['val']:+.2f}%)")
+
             if analysis['alerts']: st.error(analysis['alerts'][0], icon="🚨")
 
     with t2:
-        # --- ENHANCED ROTATION TAB ---
+        # --- ROTATION TAB ---
         c_ctrl, c_info = st.columns([1, 4])
         with c_ctrl:
             st.markdown("#### ⚙️ View")
-            timeframe = st.radio("Period", ["Daily (1D)", "Weekly (5D)"])
-            tf_key = 'change' if timeframe == "Daily (1D)" else 'change_w'
+            timeframe = st.radio("Swing Horizon", ["Tactical (Daily vs Weekly)", "Structural (Weekly vs Monthly)"])
             
-            zoom = st.slider("🔍 Zoom (%)", 1.0, 20.0, 5.0, 1.0)
+            if timeframe == "Tactical (Daily vs Weekly)":
+                x_lab, y_lab = "Weekly Trend (%)", "Daily Momentum (%)"
+                # RRG: X=Weekly, Y=Daily
+                df_sec_q, df_macro_q = analyze_quadrant_data(market_data, 'Daily (Tactical)')
+                tf_key = 'change'
+            else:
+                x_lab, y_lab = "Monthly Trend (%)", "Weekly Momentum (%)"
+                # RRG: X=Monthly, Y=Weekly
+                df_sec_q, df_macro_q = analyze_quadrant_data(market_data, 'Structural (Weekly vs Monthly)')
+                tf_key = 'change_w'
             
-            # Rotation Analysis
-            df_sec, df_ast, narrative, implication = analyze_rotation_specifics(market_data, tf_key)
-            df_sec_q, df_macro_q = analyze_quadrant_data(market_data, tf_key)
-
-            st.markdown("---")
-            st.info(f"**Flow:** {narrative}")
-            st.warning(f"**Theme:** {implication}")
+            zoom = st.slider("🔍 Zoom (%)", 1.0, 20.0, 10.0, 1.0)
             
         with c_info:
-            # QUADRANTS (Split)
             col_sec, col_macro = st.columns(2)
             with col_sec:
                 st.markdown("##### 🏢 Equity Sectors RRG")
-                st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", range_val=zoom), use_container_width=True)
+                st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", x_lab, y_lab, range_val=zoom), use_container_width=True)
             with col_macro:
                 st.markdown("##### 🌍 Macro Asset RRG")
-                st.plotly_chart(create_rrg_scatter(df_macro_q, "Asset Rotation", range_val=zoom*2), use_container_width=True)
-
-            # FLOW DIAGRAMS
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                st.plotly_chart(create_sankey_flow(df_sec, "Sector Flow"), use_container_width=True)
-            with col_f2:
-                st.plotly_chart(create_sankey_flow(df_ast, "Asset Class Flow"), use_container_width=True)
+                st.plotly_chart(create_rrg_scatter(df_macro_q, "Asset Rotation", x_lab, y_lab, range_val=zoom*2), use_container_width=True)
+            
+            st.markdown("---")
+            st.plotly_chart(create_sankey_flow(market_data, tf_key), use_container_width=True)
 
     with t3: st.plotly_chart(create_heatmap_matrix(), use_container_width=True)
 
