@@ -86,46 +86,50 @@ def fetch_live_data():
     for key, symbol in TICKERS.items():
         try:
             ticker = yf.Ticker(symbol)
-            # Fetch 15 days to ensure we have enough buffer for weekly/monthly calcs
-            hist = ticker.history(period="15d")
+            # FIX: Fetch 3 months to ensure we have enough buffer for Monthly calculations (20+ days)
+            hist = ticker.history(period="3mo")
             
             # Try fallback if primary empty
             if hist.empty and key in FALLBACKS:
                 symbol = FALLBACKS[key]
                 ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="15d")
+                hist = ticker.history(period="3mo")
             
-            # CRITICAL FIX: Drop NaNs to fix "Monday/Holiday" bug
+            # Drop NaNs to fix "Monday/Holiday" bug
             hist_clean = hist['Close'].dropna()
 
-            if not hist_clean.empty and len(hist_clean) >= 6:
+            # Need at least 22 days for Monthly calculation (approx 20 trading days)
+            if not hist_clean.empty and len(hist_clean) >= 22:
                 current = hist_clean.iloc[-1]
                 prev = hist_clean.iloc[-2]         # 1 Day ago
                 prev_week = hist_clean.iloc[-6]    # 5 Days ago
+                prev_month = hist_clean.iloc[-21]  # 20 Days ago
                 
                 # Metric Calculation
                 if key == 'US10Y':
-                    # TNX is 10x Yield (e.g., 42.50 = 4.25%).
-                    # Change of 1.0 in TNX = 10 Basis Points.
+                    # TNX is 10x Yield. Change of 1.0 = 10 bps.
                     change = (current - prev) * 10 
                     change_w = (current - prev_week) * 10
+                    change_m = (current - prev_month) * 10
                 else:
                     # Standard Percent Change
                     change = ((current - prev) / prev) * 100
                     change_w = ((current - prev_week) / prev_week) * 100
+                    change_m = ((current - prev_month) / prev_month) * 100
                 
                 data_map[key] = {
                     'price': current, 
                     'change': change, 
                     'change_w': change_w,
+                    'change_m': change_m,
                     'symbol': symbol, 
                     'error': False
                 }
             else:
-                data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'symbol': symbol, 'error': True, 'msg': "No Data"}
+                data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'change_m': 0.0, 'symbol': symbol, 'error': True, 'msg': "Insufficient Data"}
                 failed_tickers.append(key)
         except Exception as e:
-            data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'symbol': symbol, 'error': True, 'msg': str(e)}
+            data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'change_m': 0.0, 'symbol': symbol, 'error': True, 'msg': str(e)}
             failed_tickers.append(key)
             
     return data_map
@@ -261,24 +265,19 @@ def analyze_quadrant_data(data, view_type):
     for k in sector_list + macro_list:
         d = data.get(k, {})
         
-        # Plot Logic
+        # FIX: Explicit separation of timeframes for RRG logic
         if view_type == 'Daily (Tactical)':
-            # X = Weekly Trend, Y = Daily Momentum
+            # X = Weekly Trend (5d), Y = Daily Momentum (1d)
             x_val = d.get('change_w', 0)
             y_val = d.get('change', 0)
         else: # Weekly (Structural)
-            # X = Monthly Trend, Y = Weekly Momentum
-            x_val = d.get('change_m', 0) # Requires 3mo data fetch (which we don't have, so using weekly proxy)
-            # NOTE: We only fetch 15d, so let's stick to Weekly Trend vs Daily Momentum for robustness
-            # But user requested Weekly view.
-            # Fallback: X = Weekly, Y = Weekly (Diagonal line issue) -> Fixed by using prev week.
-            # Currently fetch_live_data only gets 15 days.
-            # We will use Weekly for X and Daily for Y as primary reliable metrics.
-            x_val = d.get('change_w', 0)
-            y_val = d.get('change', 0)
+            # X = Monthly Trend (20d), Y = Weekly Momentum (5d)
+            x_val = d.get('change_m', 0)
+            y_val = d.get('change_w', 0)
         
         quad = 'IMPROVING'
         color = '#3b82f6'
+        # Quadrant Logic: Leading (Both +), Lagging (Both -), Weakening (Trend + / Mom -), Improving (Trend - / Mom +)
         if x_val > 0 and y_val > 0: quad = 'LEADING'; color = '#22c55e'
         elif x_val > 0 and y_val < 0: quad = 'WEAKENING'; color = '#f59e0b'
         elif x_val < 0 and y_val < 0: quad = 'LAGGING'; color = '#ef4444'
@@ -420,7 +419,14 @@ def main():
         with c_ctrl:
             st.markdown("#### ⚙️ View")
             timeframe = st.radio("Period", ["Daily (Tactical)", "Weekly (Structural)"])
-            tf_key = 'change' if timeframe == "Daily (Tactical)" else 'change_w'
+            
+            # FIX: Ensure we use 'change' vs 'change_w' OR 'change_w' vs 'change_m'
+            if timeframe == "Daily (Tactical)":
+                tf_key = 'change'
+                x_lab, y_lab = "Weekly Trend (%)", "Daily Momentum (%)"
+            else:
+                tf_key = 'change_w'
+                x_lab, y_lab = "Monthly Trend (%)", "Weekly Momentum (%)"
             
             zoom = st.slider("🔍 Zoom (%)", 1.0, 20.0, 5.0, 1.0)
             
@@ -435,12 +441,10 @@ def main():
             col_sec, col_macro = st.columns(2)
             with col_sec:
                 st.markdown("##### 🏢 Sector Momentum Quadrant")
-                label_x = "Weekly Trend" if timeframe == "Daily (Tactical)" else "Monthly Trend"
-                label_y = "Daily Momentum" if timeframe == "Daily (Tactical)" else "Weekly Momentum"
-                st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", label_x, label_y, range_val=zoom), use_container_width=True)
+                st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", x_lab, y_lab, range_val=zoom), use_container_width=True)
             with col_macro:
                 st.markdown("##### 🌍 Macro Asset Momentum Quadrant")
-                st.plotly_chart(create_rrg_scatter(df_macro_q, "Asset Rotation", label_x, label_y, range_val=zoom*2), use_container_width=True)
+                st.plotly_chart(create_rrg_scatter(df_macro_q, "Asset Rotation", x_lab, y_lab, range_val=zoom*2), use_container_width=True)
             
             st.markdown("---")
             c1, c2 = st.columns(2)
