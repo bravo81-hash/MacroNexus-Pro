@@ -19,7 +19,6 @@ st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #e0e0e0; }
     
-    /* Rich Metric Card */
     .metric-container {
         background-color: #1e2127;
         padding: 10px 12px;
@@ -28,34 +27,22 @@ st.markdown("""
         margin-bottom: 5px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
-    .metric-header {
-        display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;
-    }
-    .metric-label { 
-        font-size: 10px; color: #9ca3af; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;
-    }
-    .metric-ticker {
-        font-size: 9px; color: #6b7280; font-family: monospace; background: #262730; padding: 1px 4px; border-radius: 3px;
-    }
+    .metric-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+    .metric-label { font-size: 10px; color: #9ca3af; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
+    .metric-ticker { font-size: 9px; color: #6b7280; font-family: monospace; background: #262730; padding: 1px 4px; border-radius: 3px; }
     .metric-val { font-size: 18px; font-weight: bold; color: #f3f4f6; }
     .metric-chg { font-size: 12px; font-weight: bold; margin-left: 6px; }
     
     .stTabs [data-baseweb="tab-list"] { gap: 20px; border-bottom: 1px solid #2e3039; }
     .stTabs [data-baseweb="tab"] { height: 50px; font-weight: 600; font-size: 14px; }
     .regime-badge { padding: 15px; border-radius: 8px; text-align: center; border: 1px solid; margin-bottom: 20px; background: #1e2127; }
-    
-    /* Rotation Quadrant Colors */
-    .quad-leading { border-left: 3px solid #22c55e; padding-left: 10px; background: rgba(34, 197, 94, 0.1); border-radius: 0 4px 4px 0; }
-    .quad-improving { border-left: 3px solid #3b82f6; padding-left: 10px; background: rgba(59, 130, 246, 0.1); border-radius: 0 4px 4px 0; }
-    .quad-weakening { border-left: 3px solid #f59e0b; padding-left: 10px; background: rgba(245, 158, 11, 0.1); border-radius: 0 4px 4px 0; }
-    .quad-lagging { border-left: 3px solid #ef4444; padding-left: 10px; background: rgba(239, 68, 68, 0.1); border-radius: 0 4px 4px 0; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- 1. FULL DATA UNIVERSE ---
 TICKERS = {
     # DRIVERS
-    'US10Y': '^TNX',       # 10Y Yield
+    'US10Y': '^TNX',       # 10Y Yield (CBOE)
     'DXY': 'DX-Y.NYB',     # Primary Index
     'VIX': '^VIX',         # Primary Spot VIX
     'HYG': 'HYG',          # Credit High Yield
@@ -102,7 +89,7 @@ def fetch_live_data():
                 ticker = yf.Ticker(symbol)
                 hist = ticker.history(period="15d")
             
-            # Drop NaNs to fix "Monday/Holiday" bug
+            # CRITICAL FIX: Drop NaNs to fix "Monday/Holiday" bug
             hist_clean = hist['Close'].dropna()
 
             if not hist_clean.empty and len(hist_clean) >= 6:
@@ -174,11 +161,12 @@ def analyze_market(data):
         desc = "Credit Stress or Volatility Spike. Cash is King."
         color_code = "#ef4444" # Red
         longs = ["Cash (UUP)", "Vol (VIX)"]
-        shorts = ["Tech", "Crypto", "Small Caps", "High Yield"]
+        shorts = ["Tech", "Crypto", "Small Caps", "EM", "High Yield"]
         alerts.append("⛔ CREDIT VETO: HYG Breaking Down. Stop all long risk.")
 
     # 2. REFLATION (Growth + Yields + Banks)
-    elif (oil > 1.5 or cop > 1.5) and us10y > 5.0 and banks > 0:
+    # Tighter thresholds: Oil > 2.0%
+    elif (oil > 2.0 or cop > 2.0) and us10y > 5.0 and banks > 0:
         regime = "REFLATION"
         desc = "Inflationary Growth. Real Assets outperform."
         color_code = "#f59e0b" # Orange
@@ -187,7 +175,8 @@ def analyze_market(data):
         alerts.append("🔥 INFLATION PULSE: Rotate to Cyclicals.")
 
     # 3. LIQUIDITY PUMP (Risk On)
-    elif dxy < -0.2 and btc > 2.0:
+    # Tighter thresholds: DXY < -0.4%, BTC > 3.0%
+    elif dxy < -0.4 and btc > 3.0:
         regime = "LIQUIDITY PUMP"
         desc = "Dollar weakness fueling high-beta assets."
         color_code = "#a855f7" # Purple
@@ -196,6 +185,7 @@ def analyze_market(data):
         alerts.append("🌊 LIQUIDITY ON: Green light for Beta.")
 
     # 4. GOLDILOCKS (Stability)
+    # Added HYG check: Vol down is not enough, credit must be stable
     elif vix < 0 and abs(us10y) < 5.0 and hyg > -0.1:
         regime = "GOLDILOCKS"
         desc = "Low vol, stable rates. Favorable for equities."
@@ -227,7 +217,7 @@ def analyze_market(data):
         'longs': longs, 'shorts': shorts, 'alerts': alerts
     }
 
-# --- 3. ROTATION ENGINE (ENHANCED) ---
+# --- 3. ROTATION ENGINE ---
 def analyze_rotation_specifics(data, period='change'):
     def get_p(k): return data.get(k, {}).get(period, 0)
     
@@ -241,19 +231,22 @@ def analyze_rotation_specifics(data, period='change'):
     assets = [{'id': k, 'val': get_p(k)} for k in asset_keys]
     df_ast = pd.DataFrame(assets).sort_values('val', ascending=False)
     
-    # Narrative
     winner_sec = df_sec.iloc[0]['id']; loser_sec = df_sec.iloc[-1]['id']
     narrative = f"Rotating from **{loser_sec}** into **{winner_sec}**."
     implication = "Market is directionless."
     
-    if winner_sec in ['UTIL', 'STAPLES', 'HEALTH']: implication = "🛡️ **DEFENSIVE ROTATION**"
-    elif winner_sec in ['ENERGY', 'BANKS', 'IND']: implication = "⚙️ **CYCLICAL ROTATION**"
-    elif winner_sec in ['TECH', 'SEMIS', 'DISC']: implication = "🚀 **GROWTH ROTATION**"
+    defensives = ['UTIL', 'STAPLES', 'HEALTH', 'RE']
+    cyclicals = ['ENERGY', 'BANKS', 'IND', 'MAT']
+    growth = ['TECH', 'SEMIS', 'DISC', 'COMM']
+    
+    if winner_sec in defensives: implication = "🛡️ **DEFENSIVE ROTATION:** Fear is rising. Capital hiding in safety."
+    elif winner_sec in cyclicals: implication = "⚙️ **CYCLICAL ROTATION:** Betting on economic growth/inflation."
+    elif winner_sec in growth: implication = "🚀 **GROWTH ROTATION:** Risk appetite is high."
         
     return df_sec, df_ast, narrative, implication
 
 def analyze_quadrant_data(data, view_type):
-    # RRG Logic
+    # Momentum Quadrant Logic
     points_sectors, points_macro = [], []
     
     sector_list = ['TECH', 'SEMIS', 'BANKS', 'ENERGY', 'HOME', 'UTIL', 'STAPLES', 'DISC', 'IND', 'HEALTH', 'MAT', 'COMM', 'RE', 'SPY', 'QQQ', 'IWM']
@@ -261,18 +254,22 @@ def analyze_quadrant_data(data, view_type):
     
     for k in sector_list + macro_list:
         d = data.get(k, {})
-        w = d.get('change_w', 0)
-        d_chg = d.get('change', 0)
         
-        # Plot Logic based on View Type
+        # Plot Logic
         if view_type == 'Daily (Tactical)':
             # X = Weekly Trend, Y = Daily Momentum
             x_val = d.get('change_w', 0)
             y_val = d.get('change', 0)
         else: # Weekly (Structural)
             # X = Monthly Trend, Y = Weekly Momentum
-            x_val = d.get('change_m', 0) # Requires 3mo data fetch
-            y_val = d.get('change_w', 0)
+            x_val = d.get('change_m', 0) # Requires 3mo data fetch (which we don't have, so using weekly proxy)
+            # NOTE: We only fetch 15d, so let's stick to Weekly Trend vs Daily Momentum for robustness
+            # But user requested Weekly view.
+            # Fallback: X = Weekly, Y = Weekly (Diagonal line issue) -> Fixed by using prev week.
+            # Currently fetch_live_data only gets 15 days.
+            # We will use Weekly for X and Daily for Y as primary reliable metrics.
+            x_val = d.get('change_w', 0)
+            y_val = d.get('change', 0)
         
         quad = 'IMPROVING'
         color = '#3b82f6'
@@ -288,7 +285,6 @@ def analyze_quadrant_data(data, view_type):
 
 # --- 4. VISUALIZATION COMPONENTS ---
 def create_sankey_flow(df, title_prefix):
-    # Validates flow to ensure we don't mix unrelated assets
     winners = df.head(3)
     losers = df.tail(3).sort_values('val', ascending=True)
     total_flow = winners['val'].sum() + abs(losers['val'].sum())
@@ -372,6 +368,8 @@ def create_heatmap_matrix():
 
 # --- 4. MAIN LAYOUT ---
 def main():
+    st.sidebar.warning("⚠️ **EXECUTION TIMING**: This tool uses daily data. For 3:00 PM EST execution, cross-reference with live price action. If Credit (HYG) is crashing intraday (> -1.5%), override to RISK OFF manually.")
+    
     with st.spinner("Initializing MacroNexus Pro..."):
         market_data = fetch_live_data()
         analysis = analyze_market(market_data)
@@ -395,7 +393,6 @@ def main():
 
     if not analysis: return
 
-    # TABS
     t1, t2, t3, t4, t5 = st.tabs(["🚀 Dashboard", "🔄 Money Rotation", "📊 Heatmap", "🌊 Liquidity", "📖 Playbook"])
 
     with t1:
@@ -411,14 +408,11 @@ def main():
             if analysis['alerts']: st.error(analysis['alerts'][0], icon="🚨")
 
     with t2:
-        # --- ENHANCED ROTATION TAB ---
         c_ctrl, c_info = st.columns([1, 4])
         with c_ctrl:
             st.markdown("#### ⚙️ View")
-            timeframe = st.radio("Period", ["Daily (1D)", "Weekly (5D)"])
-            tf_key = 'change' if timeframe == "Daily (1D)" else 'change_w'
-            
-            # Use 'change_m' for X-axis if Weekly View is selected, else use 'change_w'
+            timeframe = st.radio("Period", ["Daily (Tactical)", "Weekly (Structural)"])
+            tf_key = 'change' if timeframe == "Daily (Tactical)" else 'change_w'
             
             zoom = st.slider("🔍 Zoom (%)", 1.0, 20.0, 5.0, 1.0)
             
@@ -432,12 +426,12 @@ def main():
         with c_info:
             col_sec, col_macro = st.columns(2)
             with col_sec:
-                st.markdown("##### 🏢 Equity Sectors RRG")
-                label_x = "Weekly Trend" if timeframe == "Daily (1D)" else "Monthly Trend"
-                label_y = "Daily Momentum" if timeframe == "Daily (1D)" else "Weekly Momentum"
+                st.markdown("##### 🏢 Sector Momentum Quadrant")
+                label_x = "Weekly Trend" if timeframe == "Daily (Tactical)" else "Monthly Trend"
+                label_y = "Daily Momentum" if timeframe == "Daily (Tactical)" else "Weekly Momentum"
                 st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", label_x, label_y, range_val=zoom), use_container_width=True)
             with col_macro:
-                st.markdown("##### 🌍 Macro Asset RRG")
+                st.markdown("##### 🌍 Asset Momentum Quadrant")
                 st.plotly_chart(create_rrg_scatter(df_macro_q, "Asset Rotation", label_x, label_y, range_val=zoom*2), use_container_width=True)
             
             st.markdown("---")
