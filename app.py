@@ -122,31 +122,31 @@ def analyze_market(data):
     hyg, vix, oil, cop, us10y, dxy, btc = get_c('HYG'), get_c('VIX'), get_c('OIL'), get_c('COPPER'), get_c('US10Y'), get_c('DXY'), get_c('BTC')
     banks = get_c('BANKS')
 
-    regime, desc, color_code = "NEUTRAL", "No clear macro dominance.", "#6b7280"
+    regime, desc, color_code = "NEUTRAL", "No clear macro dominance. Follow price momentum.", "#6b7280"
     longs, shorts, alerts = [], [], []
 
     if hyg < -0.5 or vix > 5.0:
         regime = "RISK OFF"
-        desc = "Credit Stress or Vol Spike."
-        color_code = "#ef4444"
+        desc = "Credit Stress or Vol Spike. Cash is King."
+        color_code = "#ef4444" # Red
         longs = ["Cash (UUP)", "Vol (VIX)"]; shorts = ["Tech", "Crypto", "High Yield"]
         alerts.append("⛔ CREDIT VETO: Risk assets unsafe.")
     elif (oil > 1.5 or cop > 1.5) and us10y > 5.0 and banks > 0:
         regime = "REFLATION"
-        desc = "Growth + Inflation rising."
-        color_code = "#f59e0b"
+        desc = "Growth + Inflation rising. Real assets outperform."
+        color_code = "#f59e0b" # Orange
         longs = ["Energy", "Banks", "Industrials"]; shorts = ["Bonds", "Tech"]
         alerts.append("🔥 INFLATION: Rotate to Cyclicals.")
     elif dxy < -0.2 and btc > 2.0:
         regime = "LIQUIDITY PUMP"
         desc = "Dollar weak, Beta running."
-        color_code = "#a855f7"
+        color_code = "#a855f7" # Purple
         longs = ["Bitcoin", "Nasdaq", "Semis"]; shorts = ["Dollar", "Defensives"]
         alerts.append("🌊 LIQUIDITY: Green light for Beta.")
     elif vix < 0 and abs(us10y) < 5.0 and hyg > -0.1:
         regime = "GOLDILOCKS"
         desc = "Low vol, stable rates."
-        color_code = "#22c55e"
+        color_code = "#22c55e" # Green
         longs = ["S&P 500", "Tech", "Quality"]; shorts = ["Volatility"]
         alerts.append("✅ STABLE: Buy Dips.")
 
@@ -186,7 +186,7 @@ def analyze_rotation_specifics(data, period='change'):
         
     return df_sec, df_ast, narrative, implication
 
-def analyze_quadrant_data(data):
+def analyze_quadrant_data(data, period_key):
     # RRG Logic: Separated into two datasets for cleaner charts
     points_sectors = []
     points_macro = []
@@ -199,13 +199,18 @@ def analyze_quadrant_data(data):
         w = d.get('change_w', 0)
         d_chg = d.get('change', 0)
         
+        # Use selected period as the "Momentum" (Y-Axis)
+        # Use Weekly as "Trend" (X-Axis) unless we are looking at daily
+        y_val = d.get(period_key, 0)
+        x_val = d.get('change_w', 0) # X is always Structural Trend (Weekly)
+        
         quad = 'IMPROVING'
         color = '#3b82f6'
-        if w > 0 and d_chg > 0: quad = 'LEADING'; color = '#22c55e'
-        elif w > 0 and d_chg < 0: quad = 'WEAKENING'; color = '#f59e0b'
-        elif w < 0 and d_chg < 0: quad = 'LAGGING'; color = '#ef4444'
+        if x_val > 0 and y_val > 0: quad = 'LEADING'; color = '#22c55e'
+        elif x_val > 0 and y_val < 0: quad = 'WEAKENING'; color = '#f59e0b'
+        elif x_val < 0 and y_val < 0: quad = 'LAGGING'; color = '#ef4444'
         
-        item = {'id': k, 'x': w, 'y': d_chg, 'quad': quad, 'color': color}
+        item = {'id': k, 'x': x_val, 'y': y_val, 'quad': quad, 'color': color}
         
         if k in sector_list: points_sectors.append(item)
         else: points_macro.append(item)
@@ -230,7 +235,7 @@ def create_sankey_flow(df, title_prefix):
 
     node_colors = ['#ef4444'] * len(losers) + ['#22c55e'] * len(winners)
     fig = go.Figure(data=[go.Sankey(node = dict(pad = 15, thickness = 20, line = dict(color = "black", width = 0.5), label = labels, color = node_colors), link = dict(source = sources, target = targets, value = values, color = colors))])
-    fig.update_layout(title_text=f"<b>{title_prefix}: Capital Flow</b>", font=dict(size=12, color='white'), paper_bgcolor='rgba(0,0,0,0)', height=300, margin=dict(l=10, r=10, t=40, b=10))
+    fig.update_layout(title_text=f"<b>{title_prefix} Flow</b>", font=dict(size=12, color='white'), paper_bgcolor='rgba(0,0,0,0)', height=350, margin=dict(l=10, r=10, t=40, b=10))
     return fig
 
 def create_rrg_scatter(df, title, range_val=5):
@@ -252,8 +257,8 @@ def create_rrg_scatter(df, title, range_val=5):
     fig.update_traces(textposition='top center', marker=dict(size=14, line=dict(width=1, color='white')))
     fig.update_layout(
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'),
-        xaxis=dict(title="Weekly Trend (%)", zeroline=False, range=[-range_val, range_val]), 
-        yaxis=dict(title="Daily Momentum (%)", zeroline=False, range=[-range_val, range_val]),
+        xaxis=dict(title="Trend (Weekly)", zeroline=False, range=[-range_val, range_val]), 
+        yaxis=dict(title="Momentum (Selected Period)", zeroline=False, range=[-range_val, range_val]),
         showlegend=False, height=450
     )
     return fig
@@ -310,8 +315,6 @@ def main():
         market_data = fetch_live_data()
         analysis = analyze_market(market_data)
         
-        df_sectors, df_assets, rot_narrative, rot_imp = analyze_rotation_specifics(market_data, 'change')
-
     st.markdown("### 📡 Market Pulse")
     if analysis and analysis['regime'] == 'DATA ERROR': st.error(analysis['desc'], icon="🚨")
     
@@ -339,34 +342,52 @@ def main():
         with c_a:
             bg = analysis['color']
             st.markdown(f"""<div class="regime-badge" style="background-color: {bg}22; border-color: {bg};"><div style="color: {bg}; font-weight: bold; font-size: 20px; margin-bottom: 5px;">{analysis['regime']}</div><div style="font-size: 11px; color: #ccc;">{analysis['desc']}</div></div>""", unsafe_allow_html=True)
-            st.success("**LONG**"); [st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True) for item in analysis['longs']]
-            st.error("**AVOID**"); [st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True) for item in analysis['shorts']]
+            st.success("**LONG**")
+            
+            # FIXED DISPLAY BUG: Standard Loops
+            for item in analysis['longs']:
+                st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True)
+            
+            st.error("**AVOID**")
+            for item in analysis['shorts']:
+                st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True)
+                
             if analysis['alerts']: st.error(analysis['alerts'][0], icon="🚨")
 
     with t2:
-        st.markdown(f"#### {rot_narrative}")
-        st.markdown(f"**Implication:** {rot_imp}")
-        
-        # Quadrant Data
-        df_sec_q, df_macro_q = analyze_quadrant_data(market_data)
-        
-        # Controls for Scale
-        zoom = st.slider("🔍 Zoom Level (Axis Range %)", 1.0, 20.0, 5.0, 1.0)
-        
-        col_sec, col_macro = st.columns(2)
-        
-        with col_sec:
-            st.markdown("##### 🏢 Equity Sectors RRG")
-            st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", range_val=zoom), use_container_width=True)
-            st.caption("Compare Stocks vs Stocks (Similar Volatility)")
+        # --- ENHANCED ROTATION TAB ---
+        c_ctrl, c_info = st.columns([1, 4])
+        with c_ctrl:
+            st.markdown("#### ⚙️ View")
+            timeframe = st.radio("Period", ["Daily (1D)", "Weekly (5D)"])
+            tf_key = 'change' if timeframe == "Daily (1D)" else 'change_w'
             
-        with col_macro:
-            st.markdown("##### 🌍 Global Assets RRG")
-            st.plotly_chart(create_rrg_scatter(df_macro_q, "Macro Asset Rotation", range_val=zoom*2), use_container_width=True)
-            st.caption("Compare High Beta Assets (Crypto/Commodities) separately.")
+            zoom = st.slider("🔍 Zoom (%)", 1.0, 20.0, 5.0, 1.0)
             
-        st.markdown("---")
-        st.info("**How to Read:** Top Right = Strongest Trend + Momentum. Bottom Left = Weakest.")
+            # Rotation Analysis
+            df_sec, df_ast, narrative, implication = analyze_rotation_specifics(market_data, tf_key)
+            df_sec_q, df_macro_q = analyze_quadrant_data(market_data, tf_key)
+
+            st.markdown("---")
+            st.info(f"**Flow:** {narrative}")
+            st.warning(f"**Theme:** {implication}")
+            
+        with c_info:
+            # QUADRANTS (Split)
+            col_sec, col_macro = st.columns(2)
+            with col_sec:
+                st.markdown("##### 🏢 Equity Sectors RRG")
+                st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", range_val=zoom), use_container_width=True)
+            with col_macro:
+                st.markdown("##### 🌍 Macro Asset RRG")
+                st.plotly_chart(create_rrg_scatter(df_macro_q, "Asset Rotation", range_val=zoom*2), use_container_width=True)
+
+            # FLOW DIAGRAMS
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                st.plotly_chart(create_sankey_flow(df_sec, "Sector Flow"), use_container_width=True)
+            with col_f2:
+                st.plotly_chart(create_sankey_flow(df_ast, "Asset Class Flow"), use_container_width=True)
 
     with t3: st.plotly_chart(create_heatmap_matrix(), use_container_width=True)
 
