@@ -162,56 +162,39 @@ def analyze_market(data):
 
 # --- 3. ROTATION ENGINE (ENHANCED) ---
 def analyze_rotation_specifics(data, period='change'):
-    """
-    Identifies capital flows.
-    period: 'change' (Daily) or 'change_w' (Weekly)
-    """
     def get_p(k): return data.get(k, {}).get(period, 0)
     
-    # 1. SECTORS
     sector_keys = ['TECH', 'SEMIS', 'BANKS', 'ENERGY', 'HOME', 'UTIL', 'HEALTH', 'IND', 'MAT', 'COMM', 'DISC', 'STAPLES', 'RE']
-    sectors = []
-    for k in sector_keys:
-        sectors.append({'id': k, 'val': get_p(k), 'group': 'Sector'})
-    
+    sectors = [{'id': k, 'val': get_p(k), 'group': 'Sector'} for k in sector_keys]
     df_sec = pd.DataFrame(sectors).sort_values('val', ascending=False)
     
-    # 2. ASSETS
     asset_keys = ['GOLD', 'BTC', 'OIL', 'TLT', 'SPY', 'DXY', 'EEM']
-    assets = []
-    for k in asset_keys:
-        assets.append({'id': k, 'val': get_p(k), 'group': 'Asset'})
-        
+    assets = [{'id': k, 'val': get_p(k), 'group': 'Asset'} for k in asset_keys]
     df_ast = pd.DataFrame(assets).sort_values('val', ascending=False)
     
-    # 3. ROTATION NARRATIVE
-    winner_sec = df_sec.iloc[0]['id']
-    loser_sec = df_sec.iloc[-1]['id']
+    winner_sec = df_sec.iloc[0]['id']; loser_sec = df_sec.iloc[-1]['id']
+    narrative = f"Money is moving from **{loser_sec}** to **{winner_sec}**."
+    implication = "Market is directionless."
     
-    # Theme Detection
     defensives = ['UTIL', 'STAPLES', 'HEALTH', 'RE']
     cyclicals = ['ENERGY', 'BANKS', 'IND', 'MAT']
     growth = ['TECH', 'SEMIS', 'DISC', 'COMM']
     
-    narrative = f"Money is moving from **{loser_sec}** to **{winner_sec}**."
-    implication = "Market is directionless."
-    
-    if winner_sec in defensives:
-        implication = "🛡️ **DEFENSIVE ROTATION:** Fear is rising. Capital hiding in safety."
-    elif winner_sec in cyclicals:
-        implication = "⚙️ **CYCLICAL ROTATION:** Betting on economic growth/inflation."
-    elif winner_sec in growth:
-        implication = "🚀 **GROWTH ROTATION:** Risk appetite is high."
+    if winner_sec in defensives: implication = "🛡️ **DEFENSIVE ROTATION:** Fear is rising. Capital hiding in safety."
+    elif winner_sec in cyclicals: implication = "⚙️ **CYCLICAL ROTATION:** Betting on economic growth/inflation."
+    elif winner_sec in growth: implication = "🚀 **GROWTH ROTATION:** Risk appetite is high."
         
     return df_sec, df_ast, narrative, implication
 
 def analyze_quadrant_data(data):
-    # RRG Logic (Trend vs Momentum)
-    # X = Weekly, Y = Daily
-    points = []
-    keys = [k for k in TICKERS.keys() if k not in ['US10Y', 'VIX', 'HYG', 'DXY', 'TIP']]
+    # RRG Logic: Separated into two datasets for cleaner charts
+    points_sectors = []
+    points_macro = []
     
-    for k in keys:
+    sector_list = ['TECH', 'SEMIS', 'BANKS', 'ENERGY', 'HOME', 'UTIL', 'STAPLES', 'DISC', 'IND', 'HEALTH', 'MAT', 'COMM', 'RE', 'SPY', 'QQQ', 'IWM']
+    macro_list = ['GOLD', 'SILVER', 'OIL', 'NATGAS', 'COPPER', 'BTC', 'ETH', 'SOL', 'EURO', 'YEN', 'TLT', 'DXY', 'EEM']
+    
+    for k in sector_list + macro_list:
         d = data.get(k, {})
         w = d.get('change_w', 0)
         d_chg = d.get('change', 0)
@@ -222,77 +205,57 @@ def analyze_quadrant_data(data):
         elif w > 0 and d_chg < 0: quad = 'WEAKENING'; color = '#f59e0b'
         elif w < 0 and d_chg < 0: quad = 'LAGGING'; color = '#ef4444'
         
-        points.append({'id': k, 'x': w, 'y': d_chg, 'quad': quad, 'color': color})
+        item = {'id': k, 'x': w, 'y': d_chg, 'quad': quad, 'color': color}
         
-    return pd.DataFrame(points)
+        if k in sector_list: points_sectors.append(item)
+        else: points_macro.append(item)
+        
+    return pd.DataFrame(points_sectors), pd.DataFrame(points_macro)
 
 # --- 4. VISUALIZATION COMPONENTS ---
 def create_sankey_flow(df, title_prefix):
-    # Sankey: Losers (Left) -> Winners (Right)
-    # We take top 3 winners and bottom 3 losers to show flow
-    
     winners = df.head(3)
-    losers = df.tail(3).sort_values('val', ascending=True) # Sort to get biggest losers first
-    
-    # Calculate absolute total flow approximation
+    losers = df.tail(3).sort_values('val', ascending=True)
     total_flow = winners['val'].sum() + abs(losers['val'].sum())
     
     labels = list(losers['id']) + list(winners['id'])
-    source_indices = [i for i in range(len(losers))] # 0, 1, 2
-    target_indices = [len(losers) + i for i in range(len(winners))] # 3, 4, 5
-    
-    # Simplified: Map every loser to every winner proportionally (Visual representation)
-    sources = []
-    targets = []
-    values = []
-    colors = []
+    sources, targets, values, colors = [], [], [], []
     
     for i, loser_row in losers.iterrows():
         idx_src = list(losers['id']).index(loser_row['id'])
         for j, winner_row in winners.iterrows():
             idx_tgt = len(losers) + list(winners['id']).index(winner_row['id'])
-            
-            # Flow weight approx
             weight = (abs(loser_row['val']) * winner_row['val']) / total_flow * 10
-            
-            sources.append(idx_src)
-            targets.append(idx_tgt)
-            values.append(weight)
-            colors.append('rgba(75, 85, 99, 0.5)') # Grey links
+            sources.append(idx_src); targets.append(idx_tgt); values.append(weight); colors.append('rgba(75, 85, 99, 0.5)')
 
     node_colors = ['#ef4444'] * len(losers) + ['#22c55e'] * len(winners)
-    
-    fig = go.Figure(data=[go.Sankey(
-        node = dict(
-          pad = 15, thickness = 20, line = dict(color = "black", width = 0.5),
-          label = labels, color = node_colors
-        ),
-        link = dict(source = sources, target = targets, value = values, color = colors)
-    )])
-    
-    fig.update_layout(
-        title_text=f"<b>{title_prefix}: Capital Flow</b>", 
-        font=dict(size=12, color='white'),
-        paper_bgcolor='rgba(0,0,0,0)',
-        height=300, margin=dict(l=10, r=10, t=40, b=10)
-    )
+    fig = go.Figure(data=[go.Sankey(node = dict(pad = 15, thickness = 20, line = dict(color = "black", width = 0.5), label = labels, color = node_colors), link = dict(source = sources, target = targets, value = values, color = colors))])
+    fig.update_layout(title_text=f"<b>{title_prefix}: Capital Flow</b>", font=dict(size=12, color='white'), paper_bgcolor='rgba(0,0,0,0)', height=300, margin=dict(l=10, r=10, t=40, b=10))
     return fig
 
-def create_rrg_scatter(df):
+def create_rrg_scatter(df, title, range_val=5):
+    if df.empty: return go.Figure()
+    
     fig = px.scatter(df, x='x', y='y', text='id', color='color', 
                      color_discrete_map="identity",
-                     title=f"<b>Relative Rotation (Trend vs Momentum)</b>")
+                     title=f"<b>{title}</b>")
     
     fig.add_hline(y=0, line_dash="dot", line_color="gray"); fig.add_vline(x=0, line_dash="dot", line_color="gray")
     
-    # Quadrant Labels
-    fig.add_annotation(x=3, y=3, text="LEADING", showarrow=False, font=dict(color="#22c55e", size=12))
-    fig.add_annotation(x=-3, y=-3, text="LAGGING", showarrow=False, font=dict(color="#ef4444", size=12))
+    # Quadrant Labels - Adjusted based on zoom
+    pos = range_val * 0.7
+    fig.add_annotation(x=pos, y=pos, text="LEADING", showarrow=False, font=dict(color="#22c55e", size=12))
+    fig.add_annotation(x=-pos, y=-pos, text="LAGGING", showarrow=False, font=dict(color="#ef4444", size=12))
+    fig.add_annotation(x=-pos, y=pos, text="IMPROVING", showarrow=False, font=dict(color="#3b82f6", size=10))
+    fig.add_annotation(x=pos, y=-pos, text="WEAKENING", showarrow=False, font=dict(color="#f59e0b", size=10))
     
     fig.update_traces(textposition='top center', marker=dict(size=14, line=dict(width=1, color='white')))
-    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'),
-                      xaxis=dict(title="Weekly Trend (%)", zeroline=False), yaxis=dict(title="Daily Momentum (%)", zeroline=False),
-                      showlegend=False, height=500)
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'),
+        xaxis=dict(title="Weekly Trend (%)", zeroline=False, range=[-range_val, range_val]), 
+        yaxis=dict(title="Daily Momentum (%)", zeroline=False, range=[-range_val, range_val]),
+        showlegend=False, height=450
+    )
     return fig
 
 def create_nexus_graph(market_data):
@@ -347,7 +310,6 @@ def main():
         market_data = fetch_live_data()
         analysis = analyze_market(market_data)
         
-        # Always run rotation analysis for the tabs
         df_sectors, df_assets, rot_narrative, rot_imp = analyze_rotation_specifics(market_data, 'change')
 
     st.markdown("### 📡 Market Pulse")
@@ -369,7 +331,6 @@ def main():
 
     if not analysis: return
 
-    # TABS
     t1, t2, t3, t4, t5 = st.tabs(["🚀 Dashboard", "🔄 Money Rotation", "📊 Heatmap", "🌊 Liquidity", "📖 Playbook"])
 
     with t1:
@@ -378,48 +339,34 @@ def main():
         with c_a:
             bg = analysis['color']
             st.markdown(f"""<div class="regime-badge" style="background-color: {bg}22; border-color: {bg};"><div style="color: {bg}; font-weight: bold; font-size: 20px; margin-bottom: 5px;">{analysis['regime']}</div><div style="font-size: 11px; color: #ccc;">{analysis['desc']}</div></div>""", unsafe_allow_html=True)
-            st.success("**LONG**")
-            
-            # FIXED DISPLAY BUG: Using loop instead of list comprehension for markdown rendering
-            for item in analysis['longs']:
-                st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True)
-            
-            st.error("**AVOID**")
-            for item in analysis['shorts']:
-                st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True)
-                
+            st.success("**LONG**"); [st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True) for item in analysis['longs']]
+            st.error("**AVOID**"); [st.markdown(f"<small>• {item}</small>", unsafe_allow_html=True) for item in analysis['shorts']]
             if analysis['alerts']: st.error(analysis['alerts'][0], icon="🚨")
 
     with t2:
-        # --- ENHANCED ROTATION TAB ---
-        col_ctrl, col_main = st.columns([1, 4])
+        st.markdown(f"#### {rot_narrative}")
+        st.markdown(f"**Implication:** {rot_imp}")
         
-        with col_ctrl:
-            st.markdown("#### ⚙️ View")
-            timeframe = st.radio("Period", ["Daily (1D)", "Weekly (5D)"])
-            tf_key = 'change' if timeframe == "Daily (1D)" else 'change_w'
+        # Quadrant Data
+        df_sec_q, df_macro_q = analyze_quadrant_data(market_data)
+        
+        # Controls for Scale
+        zoom = st.slider("🔍 Zoom Level (Axis Range %)", 1.0, 20.0, 5.0, 1.0)
+        
+        col_sec, col_macro = st.columns(2)
+        
+        with col_sec:
+            st.markdown("##### 🏢 Equity Sectors RRG")
+            st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", range_val=zoom), use_container_width=True)
+            st.caption("Compare Stocks vs Stocks (Similar Volatility)")
             
-            # Recalculate based on selection
-            df_sec, df_ast, narrative, implication = analyze_rotation_specifics(market_data, tf_key)
-            quad_df = analyze_quadrant_data(market_data)
-
-            st.markdown("---")
-            st.info(f"**Flow:** {narrative}")
-            st.warning(f"**Theme:** {implication}")
+        with col_macro:
+            st.markdown("##### 🌍 Global Assets RRG")
+            st.plotly_chart(create_rrg_scatter(df_macro_q, "Macro Asset Rotation", range_val=zoom*2), use_container_width=True)
+            st.caption("Compare High Beta Assets (Crypto/Commodities) separately.")
             
-        with col_main:
-            # 1. RRG QUADRANT
-            st.markdown("##### 🧭 Sector & Asset Quadrant (Trend vs Momentum)")
-            st.plotly_chart(create_rrg_scatter(quad_df), use_container_width=True)
-            
-            # 2. FLOW DIAGRAMS
-            c1, c2 = st.columns(2)
-            with c1:
-                st.plotly_chart(create_sankey_flow(df_sec, "Sector Flows"), use_container_width=True)
-            with c2:
-                st.plotly_chart(create_sankey_flow(df_ast, "Asset Class Flows"), use_container_width=True)
-                
-            st.caption("Flow Diagram visualizes capital rotating **FROM** the biggest losers **TO** the biggest winners.")
+        st.markdown("---")
+        st.info("**How to Read:** Top Right = Strongest Trend + Momentum. Bottom Left = Weakest.")
 
     with t3: st.plotly_chart(create_heatmap_matrix(), use_container_width=True)
 
