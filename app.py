@@ -106,11 +106,11 @@ def fetch_live_data():
                 
                 # Metric Calculation
                 if key == 'US10Y':
-                    # Yahoo ^TNX already expresses changes in basis points (according to audit)
-                    # NO MULTIPLIER REQUIRED
-                    change = (current - prev)
-                    change_w = (current - prev_week)
-                    change_m = (current - prev_month)
+                    # TNX is 10x Yield (e.g., 42.50 = 4.25%).
+                    # Change of 1.0 in TNX = 10 Basis Points.
+                    change = (current - prev) * 10 
+                    change_w = (current - prev_week) * 10
+                    change_m = (current - prev_month) * 10
                 else:
                     # Standard Percent Change
                     change = ((current - prev) / prev) * 100
@@ -419,7 +419,14 @@ def main():
         with c_ctrl:
             st.markdown("#### ⚙️ View")
             timeframe = st.radio("Period", ["Daily (Tactical)", "Weekly (Structural)"])
-            tf_key = 'change' if timeframe == "Daily (Tactical)" else 'change_w'
+            
+            # FIX: Ensure label variables are defined for both branches
+            if timeframe == "Daily (Tactical)":
+                tf_key = 'change'
+                x_lab, y_lab = "Weekly Trend (%)", "Daily Momentum (%)"
+            else:
+                tf_key = 'change_w'
+                x_lab, y_lab = "Monthly Trend (%)", "Weekly Momentum (%)"
             
             zoom = st.slider("🔍 Zoom (%)", 1.0, 20.0, 5.0, 1.0)
             
@@ -434,8 +441,7 @@ def main():
             col_sec, col_macro = st.columns(2)
             with col_sec:
                 st.markdown("##### 🏢 Sector Momentum Quadrant")
-                label_x = "Weekly Trend" if timeframe == "Daily (Tactical)" else "Monthly Trend"
-                label_y = "Daily Momentum" if timeframe == "Daily (Tactical)" else "Weekly Momentum"
+                # Use the x_lab/y_lab variables here
                 st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", x_lab, y_lab, range_val=zoom), use_container_width=True)
             with col_macro:
                 st.markdown("##### 🌍 Macro Asset Momentum Quadrant")
