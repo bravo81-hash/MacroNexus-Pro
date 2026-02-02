@@ -86,7 +86,7 @@ def fetch_live_data():
     for key, symbol in TICKERS.items():
         try:
             ticker = yf.Ticker(symbol)
-            # FIX: Fetch 3 months to ensure we have enough buffer for Monthly calculations (20+ days)
+            # Fetch 3mo days to ensure we have enough buffer for weekly/monthly calcs
             hist = ticker.history(period="3mo")
             
             # Try fallback if primary empty
@@ -95,10 +95,9 @@ def fetch_live_data():
                 ticker = yf.Ticker(symbol)
                 hist = ticker.history(period="3mo")
             
-            # Drop NaNs to fix "Monday/Holiday" bug
+            # CRITICAL FIX: Drop NaNs to fix "Monday/Holiday" bug
             hist_clean = hist['Close'].dropna()
 
-            # Need at least 22 days for Monthly calculation (approx 20 trading days)
             if not hist_clean.empty and len(hist_clean) >= 22:
                 current = hist_clean.iloc[-1]
                 prev = hist_clean.iloc[-2]         # 1 Day ago
@@ -107,7 +106,9 @@ def fetch_live_data():
                 
                 # Metric Calculation
                 if key == 'US10Y':
-                    # TNX is 10x Yield. Change of 1.0 = 10 bps.
+                    # TNX is 10x Yield (e.g., 42.50 = 4.25%).
+                    # Change of 0.50 in TNX = 5 Basis Points.
+                    # Multiplier 10 converts raw change to Basis Points.
                     change = (current - prev) * 10 
                     change_w = (current - prev_week) * 10
                     change_m = (current - prev_month) * 10
@@ -126,7 +127,7 @@ def fetch_live_data():
                     'error': False
                 }
             else:
-                data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'change_m': 0.0, 'symbol': symbol, 'error': True, 'msg': "Insufficient Data"}
+                data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'change_m': 0.0, 'symbol': symbol, 'error': True, 'msg': "No Data"}
                 failed_tickers.append(key)
         except Exception as e:
             data_map[key] = {'price': 0.0, 'change': 0.0, 'change_w': 0.0, 'change_m': 0.0, 'symbol': symbol, 'error': True, 'msg': str(e)}
