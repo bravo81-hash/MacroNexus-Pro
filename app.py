@@ -106,11 +106,12 @@ def fetch_live_data():
                 
                 # Metric Calculation
                 if key == 'US10Y':
-                    # AUDIT FIX: Yahoo ^TNX already expresses changes in basis points.
-                    # NO MULTIPLIER REQUIRED.
-                    change = (current - prev)
-                    change_w = (current - prev_week)
-                    change_m = (current - prev_month)
+                    # PATCH (2025): Restoring multiplier. 
+                    # Yahoo ^TNX = 42.50. Change of 0.50 = 5 Bps.
+                    # We multiply by 10 so that 0.50 becomes "5.0" to match threshold inputs.
+                    change = (current - prev) * 10
+                    change_w = (current - prev_week) * 10
+                    change_m = (current - prev_month) * 10
                 else:
                     # Standard Percent Change
                     change = ((current - prev) / prev) * 100
@@ -175,7 +176,7 @@ def analyze_market(data):
         alerts.append("⛔ CREDIT VETO: HYG Breaking Down. Stop all long risk.")
 
     # 2. REFLATION (Growth + Yields + Banks)
-    # AUDIT FIX: US10Y threshold adjusted to 5.0 (represents 5 bps in Yahoo data)
+    # Thresholds: Oil/Copper > 2% AND US10Y > 5 bps (Scaled to 5.0)
     elif (oil > 2.0 or cop > 2.0) and us10y > 5.0 and banks > 0:
         regime = "REFLATION"
         desc = "Inflationary Growth. Real Assets outperform."
@@ -195,7 +196,7 @@ def analyze_market(data):
         alerts.append("🌊 LIQUIDITY ON: Green light for Beta.")
 
     # 4. GOLDILOCKS (Stability)
-    # AUDIT FIX: US10Y threshold adjusted to abs < 5.0 (represents < 5 bps)
+    # Thresholds: Vol Low, Yields Stable (< 5bps change)
     elif vix < 0 and abs(us10y) < 5.0 and hyg > -0.1:
         regime = "GOLDILOCKS"
         desc = "Low vol, stable rates. Favorable for equities."
@@ -357,12 +358,9 @@ def create_nexus_graph(market_data):
         node_color.append(col); node_size.append(45 if key in ['US10Y', 'DXY', 'HYG'] else 35)
         ticker = d.get('symbol', key); price = d.get('price', 0)
         
-        # AUDIT FIX: Display Logic
-        # Correctly display bps without double-counting
-        if key == 'US10Y':
-            fmt_chg = f"{chg:+.1f} bps"
-        else:
-            fmt_chg = f"{chg:+.2f}%"
+        # DISPLAY LOGIC: BPS
+        fmt_chg = f"{chg:+.2f}%"
+        if key == 'US10Y': fmt_chg = f"{chg:+.1f} bps"
             
         node_text.append(f"<b>{info['label']} ({ticker})</b><br>Price: {price:.2f}<br>Chg: {fmt_chg}")
 
@@ -406,7 +404,7 @@ def main():
             color = "#ef4444" if chg < 0 else "#22c55e"
             if key in ['VIX', 'US10Y', 'DXY']: color = "#ef4444" if chg > 0 else "#22c55e"
             
-            # AUDIT FIX: Display
+            # Display
             fmt_chg = f"{chg:+.2f}%"
             if key == 'US10Y': fmt_chg = f"{chg:+.1f} bps"
             
@@ -456,7 +454,6 @@ def main():
         with c_info:
             col_sec, col_macro = st.columns(2)
             with col_sec:
-                # AUDIT FIX: Renamed RRG to "Momentum Quadrant"
                 st.markdown("##### 🏢 Sector Momentum Quadrant")
                 st.plotly_chart(create_rrg_scatter(df_sec_q, "Sector Rotation", x_lab, y_lab, range_val=zoom), use_container_width=True)
             with col_macro:
