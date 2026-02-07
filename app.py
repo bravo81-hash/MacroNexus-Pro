@@ -430,13 +430,13 @@ def main():
         fmt_chg = f"{chg:+.1f} bps" if key == 'US10Y' else f"{chg:+.2f}%"
         
         col.markdown(f"""
-        <div class="metric-card" style="border-left: 3px solid {color};">
-            <div class="metric-label">{label}</div>
-            <div class="metric-value">{val:.2f}
-                <span class="metric-delta" style="color: {color};">{fmt_chg}</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+<div class="metric-card" style="border-left: 3px solid {color};">
+    <div class="metric-label">{label}</div>
+    <div class="metric-value">{val:.2f}
+        <span class="metric-delta" style="color: {color};">{fmt_chg}</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
     metric_tile(c1, "Credit (HYG)", "HYG")
     metric_tile(c2, "Volatility (VIX)", "VIX", invert=True)
@@ -470,16 +470,16 @@ def main():
         rc = r_colors.get(active_regime, "#6B7280")
         
         st.markdown(f"""
-        <div style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 15px;">
-            <div style="text-align: right;">
-                <div style="font-size: 10px; color: #8B9BB4; letter-spacing: 1px;">SYSTEM STATUS</div>
-                <div style="font-size: 14px; font-weight: bold; color: {rc};">ACTIVE</div>
-            </div>
-            <div class="regime-badge" style="background: {rc}22; color: {rc}; border: 1px solid {rc};">
-                {active_regime}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+<div style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 15px;">
+    <div style="text-align: right;">
+        <div style="font-size: 10px; color: #8B9BB4; letter-spacing: 1px;">SYSTEM STATUS</div>
+        <div style="font-size: 14px; font-weight: bold; color: {rc};">ACTIVE</div>
+    </div>
+    <div class="regime-badge" style="background: {rc}22; color: {rc}; border: 1px solid {rc};">
+        {active_regime}
+    </div>
+</div>
+""", unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     # --- TABS ---
@@ -532,23 +532,23 @@ def main():
         with col_L:
             # Context Card
             st.markdown(f"""
-            <div class="strat-card">
-                <div class="strat-title" style="color: {rc}">CONTEXT</div>
-                <div class="strat-subtitle">DESCRIPTION</div>
-                <div class="strat-data">{strat_data['desc']}</div>
-                
-                <div class="strat-subtitle">RISK SIZE</div>
-                <div class="strat-data" style="font-size: 24px; color: {rc}">{strat_data['risk']}</div>
-                
-                <div class="strat-subtitle">BIAS</div>
-                <div class="strat-data">{strat_data['bias']}</div>
-                
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #333;">
-                    <div style="color: #10B981; font-size: 12px; margin-bottom: 4px;"><strong>TARGETS:</strong> {strat_data.get('longs', '')}</div>
-                    <div style="color: #EF4444; font-size: 12px;"><strong>AVOID:</strong> {strat_data.get('shorts', '')}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="strat-card">
+    <div class="strat-title" style="color: {rc}">CONTEXT</div>
+    <div class="strat-subtitle">DESCRIPTION</div>
+    <div class="strat-data">{strat_data['desc']}</div>
+    
+    <div class="strat-subtitle">RISK SIZE</div>
+    <div class="strat-data" style="font-size: 24px; color: {rc}">{strat_data['risk']}</div>
+    
+    <div class="strat-subtitle">BIAS</div>
+    <div class="strat-data">{strat_data['bias']}</div>
+    
+    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #333;">
+        <div style="color: #10B981; font-size: 12px; margin-bottom: 4px;"><strong>TARGETS:</strong> {strat_data.get('longs', '')}</div>
+        <div style="color: #EF4444; font-size: 12px;"><strong>AVOID:</strong> {strat_data.get('shorts', '')}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
         with col_R:
             # Tactical Execution Card
@@ -556,32 +556,32 @@ def main():
             
             # RENDER CARD
             st.markdown(f"""
-            <div class="strat-card" style="border-color: {rc}; background: linear-gradient(145deg, {rc}11 0%, rgba(20,22,28,1) 100%);">
-                <div class="strat-title" style="color: {rc}; border-color: {rc}44;">{reactor_output['strat']}</div>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 15px;">
-                    <div>
-                        <div class="strat-subtitle">TIMING (DTE)</div>
-                        <div class="strat-data" style="font-weight: 700;">{reactor_output['dte']}</div>
-                    </div>
-                    <div>
-                        <div class="strat-subtitle">STRUCTURE</div>
-                        <div class="strat-data" style="font-weight: 700;">{reactor_output['setup']}</div>
-                    </div>
-                </div>
-                
-                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);">
-                    <div class="strat-subtitle" style="margin-top: 0;">THE LOGIC</div>
-                    <div class="strat-data" style="font-size: 13px; color: #9CA3AF;">{reactor_output['notes']}</div>
-                </div>
-                
-                <div style="margin-top: 15px; display: flex; gap: 10px;">
-                    <span class="badge-blue">IV Rank: {iv_rank}</span>
-                    <span class="badge-blue">Skew: {skew_rank}</span>
-                    <span class="badge-blue">ADX: {adx_val}</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="strat-card" style="border-color: {rc}; background: linear-gradient(145deg, {rc}11 0%, rgba(20,22,28,1) 100%);">
+    <div class="strat-title" style="color: {rc}; border-color: {rc}44;">{reactor_output['strat']}</div>
+    
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 15px;">
+        <div>
+            <div class="strat-subtitle">TIMING (DTE)</div>
+            <div class="strat-data" style="font-weight: 700;">{reactor_output['dte']}</div>
+        </div>
+        <div>
+            <div class="strat-subtitle">STRUCTURE</div>
+            <div class="strat-data" style="font-weight: 700;">{reactor_output['setup']}</div>
+        </div>
+    </div>
+    
+    <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);">
+        <div class="strat-subtitle" style="margin-top: 0;">THE LOGIC</div>
+        <div class="strat-data" style="font-size: 13px; color: #9CA3AF;">{reactor_output['notes']}</div>
+    </div>
+    
+    <div style="margin-top: 15px; display: flex; gap: 10px;">
+        <span class="badge-blue">IV Rank: {iv_rank}</span>
+        <span class="badge-blue">Skew: {skew_rank}</span>
+        <span class="badge-blue">ADX: {adx_val}</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
     # === TAB 2: MARKET PULSE ===
     with tab_pulse:
