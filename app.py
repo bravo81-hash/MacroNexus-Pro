@@ -290,8 +290,8 @@ def get_val(data, key, timeframe):
     else: 
         return d.get('change_w', 0)
 
-# --- 8. VISUALIZATION FUNCTIONS (UNCHANGED LOGIC, JUST RE-USING) ---
-# ... (Keeping graph/plot functions concise for brevity, they remain as defined previously) ...
+# --- 8. VISUALIZATION FUNCTIONS ---
+
 def plot_nexus_graph(data, timeframe):
     dot = graphviz.Digraph(comment='The Macro Machine')
     dot.attr(rankdir='LR', bgcolor='#0e1117')
@@ -332,6 +332,23 @@ def plot_sankey_sectors(data, timeframe):
     node_colors = ['#ef4444']*3 + ['#22c55e']*3
     fig = go.Figure(data=[go.Sankey(node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=labels, color=node_colors), link=dict(source=sources, target=targets, value=values, color=colors))])
     fig.update_layout(title_text=f"Sector Rotation ({'Daily' if timeframe=='Tactical (Daily)' else 'Weekly'})", font=dict(color='white'), paper_bgcolor='rgba(0,0,0,0)', height=350, margin=dict(l=10,r=10,t=40,b=10))
+    return fig
+
+def plot_sankey_assets(data, timeframe):
+    asset_keys = ['SPY','TLT','DXY','GOLD','BTC','OIL','HYG']
+    assets = {k: get_val(data, k, timeframe) for k in asset_keys}
+    df = pd.DataFrame(list(assets.items()), columns=['id', 'val']).sort_values('val', ascending=False)
+    winners = df.head(3); losers = df.tail(3)
+    labels = list(losers['id']) + list(winners['id'])
+    sources, targets, values, colors = [], [], [], []
+    for i in range(len(losers)):
+        for j in range(len(winners)):
+            sources.append(i); targets.append(len(losers) + j)
+            values.append(abs(losers.iloc[i]['val']) + abs(winners.iloc[j]['val']))
+            colors.append('rgba(168, 85, 247, 0.2)')
+    node_colors = ['#ef4444']*3 + ['#22c55e']*3
+    fig = go.Figure(data=[go.Sankey(node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=labels, color=node_colors), link=dict(source=sources, target=targets, value=values, color=colors))])
+    fig.update_layout(title_text=f"Asset Rotation ({'Daily' if timeframe=='Tactical (Daily)' else 'Weekly'})", font=dict(color='white'), paper_bgcolor='rgba(0,0,0,0)', height=350, margin=dict(l=10,r=10,t=40,b=10))
     return fig
 
 def plot_rrg(data, category, view):
