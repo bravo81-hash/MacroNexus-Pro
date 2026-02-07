@@ -9,7 +9,7 @@ import numpy as np
 
 # --- CONFIGURATION ---
 st.set_page_config(
-    page_title="MacroNexus Pro Terminal v11",
+    page_title="MacroNexus Pro Terminal v12",
     page_icon="🛰️",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -49,6 +49,9 @@ st.markdown("""
     
     /* Control Panel */
     .control-panel { background-color: #1e2127; padding: 15px; border-radius: 8px; border: 1px solid #374151; margin-bottom: 20px; }
+    
+    /* Tables */
+    .dataframe { font-size: 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -81,7 +84,111 @@ TICKERS = {
 
 FALLBACKS = {'DXY': 'UUP', 'VIX': 'VIXY'}
 
-# --- 2. DATA FETCHING ---
+# --- 2. EXPERT KNOWLEDGE BASE ---
+STRATEGY_DB = {
+    "GOLDILOCKS": {
+        "desc": "Trend + Low Vol. Favor Directional Longs.",
+        "risk": "1.5% Risk / Trade",
+        "color": "#22c55e",
+        "longs": "Tech (XLK), Semis (SMH), Growth",
+        "shorts": "Volatility (VIX), Defensives (XLU)",
+        "index": {
+            "strategy": "Directional Diagonal",
+            "dte": "Front 17 / Back 31 DTE",
+            "strikes": "Long: >70 Delta (Deep ITM) | Short: ~30 Delta (OTM)",
+            "logic": "Stock replacement. Deep ITM long mimics stock ownership; short OTM call reduces cost basis and harvests Theta in low vol."
+        },
+        "stock": {
+            "strategy": "Call Debit Spread",
+            "dte": "45-60 DTE",
+            "strikes": "Long: 60 Delta | Short: 30 Delta",
+            "logic": "Reduces cost of directional trade. 45-60 DTE gives time for the trend to play out without rapid decay.",
+            "screener": "Price > SMA50 | RSI 50-70 | EPS Gr > 0% | No Earnings < 14d"
+        }
+    },
+    "LIQUIDITY": {
+        "desc": "Aggressive Trend (Drift). Favor Beta.",
+        "risk": "1.0% Risk / Trade",
+        "color": "#a855f7",
+        "longs": "Crypto (BTC), Nasdaq (QQQ), High Beta",
+        "shorts": "Cash (UUP), Dollar (DXY)",
+        "index": {
+            "strategy": "Flyagonal (Call BWB + Put Diag)",
+            "dte": "Entry: 7-14 DTE",
+            "strikes": "Call BWB: ATM+10/+50/+60 | Put Diag: -30/-40",
+            "logic": "Pure Delta/Gamma play. Call BWB captures the drift (profit tent), Put Diagonal anchors downside."
+        },
+        "stock": {
+            "strategy": "Long Call / Zebra",
+            "dte": "60-90 DTE",
+            "strikes": "Zebra: Buy 2x 70D / Sell 1x 50D (Zero Extrinsic)",
+            "logic": "Stock replacement with zero time decay. Best for aggressive liquidity pumps where you want 100 delta exposure.",
+            "screener": "ADX > 25 | Relative Strength | High Beta | Crypto Proxies"
+        }
+    },
+    "REFLATION": {
+        "desc": "Cyclical Rotation. Yields Rising.",
+        "risk": "1.0% Risk / Trade",
+        "color": "#f59e0b",
+        "longs": "Energy (XLE), Banks (XLF), Industrials (XLI)",
+        "shorts": "Bonds (TLT), Rate-Sensitive Tech",
+        "index": {
+            "strategy": "Directional Diagonal (IWM Focus)",
+            "dte": "Front 17 / Back 31 DTE",
+            "strikes": "Long 70D / Short 30D",
+            "logic": "Reflation favors small caps (IWM). Use Diagonals to leverage the rotation out of Tech into Cyclicals."
+        },
+        "stock": {
+            "strategy": "Call Debit Spread",
+            "dte": "45-60 DTE",
+            "strikes": "Long: 55 Delta | Short: 25 Delta",
+            "logic": "Targeting Energy/Banks. Slightly wider strikes to capture volatility expansion in these sectors.",
+            "screener": "Focus: Energy / Banks / Ind | Div Yield > 2% | PEG < 1.5"
+        }
+    },
+    "NEUTRAL": {
+        "desc": "Chop / Range. Income Mode.",
+        "risk": "Income Size (No Directional)",
+        "color": "#6b7280",
+        "longs": "Theta Strategies",
+        "shorts": "Directional Breakouts",
+        "index": {
+            "strategy": "TimeEdge Double Calendar",
+            "dte": "Entry: 15 DTE / Exit: 7 DTE",
+            "strikes": "Put Cal: Sell 15 DTE / Buy 22 DTE (ATM)",
+            "logic": "TimeEdge specific: Maximizes Theta decay curve (15-7 DTE). Avoids earnings. Requires Low Vol (<20 ADX)."
+        },
+        "stock": {
+            "strategy": "Iron Condor / Calendar",
+            "dte": "30-45 DTE",
+            "strikes": "Short P: 20 Delta / Short C: 20 Delta | Wings: 10pts Wide",
+            "logic": "Classic range capture. 20 Delta is the sweet spot for single stocks. Mandatory Earnings Filter.",
+            "screener": "ADX < 20 | BB Width > 0.10 | IV Rank > 30 | No Earnings < 21d"
+        }
+    },
+    "RISK OFF": {
+        "desc": "High Vol / Credit Stress. Hedge or Short.",
+        "risk": "0.5% Risk / Trade",
+        "color": "#ef4444",
+        "longs": "Cash (UUP), Volatility (VIX)",
+        "shorts": "Tech, Small Caps, High Yield",
+        "index": {
+            "strategy": "A14 Put Broken Wing Butterfly",
+            "dte": "Entry: 14 DTE (Fri) / Exit: 7 DTE",
+            "strikes": "Long ATM / Short -40pts / Long -60pts (Skip Strike)",
+            "logic": "A14 Strategy: Designed to catch the crash. Zero upside risk. Hard exit at 7 DTE to avoid Gamma."
+        },
+        "stock": {
+            "strategy": "Put Debit Spread",
+            "dte": "60-90 DTE",
+            "strikes": "Long: 40 Delta (OTM) | Short: 15 Delta",
+            "logic": "Buying OTM puts is cheaper. We go longer duration (60-90) to avoid getting crushed by IV contraction.",
+            "screener": "Price < SMA50 | High Relative Vol | Beta > 1.5 | Debt/Eq > 2.0"
+        }
+    }
+}
+
+# --- 3. DATA FETCHING ---
 @st.cache_data(ttl=300)
 def fetch_live_data():
     data_map = {}
@@ -123,7 +230,7 @@ def fetch_live_data():
             
     return data_map
 
-# --- 3. ANALYTICS ENGINE ---
+# --- 4. ANALYTICS ENGINE ---
 def get_regime(data):
     def get_c(k): return data.get(k, {}).get('change', 0)
     hyg, vix = get_c('HYG'), get_c('VIX')
@@ -163,7 +270,7 @@ def get_quadrants(data, view):
         
     return pd.DataFrame(points)
 
-# --- 4. VISUALIZATION FUNCTIONS ---
+# --- 5. VISUALIZATION FUNCTIONS ---
 def create_nexus_graph(market_data):
     # Logic from v1.5
     nodes = {
@@ -222,10 +329,18 @@ def create_rrg(df, title):
     fig.update_layout(title=title, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), xaxis=dict(title="Trend", zeroline=False), yaxis=dict(title="Momentum", zeroline=False), showlegend=False, height=400)
     return fig
 
+def create_heatmap(data):
+    sec_data = {k: data.get(k, {}).get('change', 0) for k in ['TECH','SEMIS','BANKS','ENERGY','HOME','UTIL','HEALTH','MAT','STAPLES','DISC','IND','COMM','RE']}
+    df_hm = pd.DataFrame(list(sec_data.items()), columns=['Sector', 'Change'])
+    fig_hm = px.treemap(df_hm, path=['Sector'], values=[1]*len(df_hm), color='Change', color_continuous_scale=['#ef4444', '#1e2127', '#22c55e'], color_continuous_midpoint=0)
+    fig_hm.update_layout(margin=dict(t=0, l=0, r=0, b=0), paper_bgcolor='rgba(0,0,0,0)', height=300)
+    return fig_hm
+
 # --- 5. MAIN APP ---
 def main():
     # --- DATA & STATE ---
-    market_data = fetch_live_data()
+    with st.spinner("Initializing MacroNexus..."):
+        market_data = fetch_live_data()
     
     # --- HEADER TILES ---
     cols = st.columns(6)
@@ -234,10 +349,11 @@ def main():
         d = market_data.get(key, {})
         val = d.get('price', 0); chg = d.get('change', 0)
         color = "#ef4444" if chg < 0 else "#22c55e"
-        if key in ['VIX', 'US10Y', 'DXY']: color = "#ef4444" if chg > 0 else "#22c55e" # Inverted
-        cols[i].markdown(f"""<div class="metric-container" style="border-left-color: {color};"><div class="metric-header"><span class="metric-label">{lbl}</span></div><div><span class="metric-val">{val:.2f}</span><span class="metric-chg" style="color: {color};">{chg:+.2f}%</span></div></div>""", unsafe_allow_html=True)
+        if key in ['VIX', 'US10Y', 'DXY']: color = "#ef4444" if chg > 0 else "#22c55e" # Inverted logic
+        fmt_chg = f"{chg:+.1f} bps" if key == 'US10Y' else f"{chg:+.2f}%"
+        cols[i].markdown(f"""<div class="metric-container" style="border-left-color: {color};"><div class="metric-header"><span class="metric-label">{lbl}</span></div><div><span class="metric-val">{val:.2f}</span><span class="metric-chg" style="color: {color};">{fmt_chg}</span></div></div>""", unsafe_allow_html=True)
 
-    # --- CONTROL PANEL ---
+    # --- CONTROL PANEL (MAIN DASHBOARD) ---
     with st.container():
         st.markdown('<div class="control-panel">', unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1, 1, 2])
@@ -248,7 +364,7 @@ def main():
             auto_regime = get_regime(market_data)
             active_regime = st.selectbox("Force Regime", ["GOLDILOCKS", "LIQUIDITY", "REFLATION", "NEUTRAL", "RISK OFF"], index=["GOLDILOCKS", "LIQUIDITY", "REFLATION", "NEUTRAL", "RISK OFF"].index(auto_regime)) if manual_on else auto_regime
         
-        # 2. Timeframe
+        # 2. Timeframe Toggle
         with c2:
             time_view = st.radio("Quadrant View", ["Tactical (Daily)", "Structural (Weekly)"], horizontal=True)
             
@@ -275,12 +391,7 @@ def main():
         # LOGIC ENGINE
         st.divider()
         
-        # 1. Sizing & Logic
-        risk_pct = "1.0%"
-        focus = "Longs"
-        if active_regime == "RISK OFF": risk_pct = "0.5%"; focus = "Cash/Hedge"
-        elif active_regime == "GOLDILOCKS": risk_pct = "1.5%"; focus = "Aggressive Longs"
-        elif active_regime == "NEUTRAL": risk_pct = "Inc"; focus = "Income"
+        strat_db = STRATEGY_DB.get(active_regime, STRATEGY_DB["NEUTRAL"])
         
         mc1, mc2 = st.columns([1, 2])
         
@@ -289,9 +400,9 @@ def main():
             <div class="strat-card">
                 <div class="strat-header" style="color: {rc};">COMMAND CENTER</div>
                 <div class="strat-sub">RISK ALLOCATION</div>
-                <div class="strat-val" style="color: {rc}; font-size: 20px;">{risk_pct} per trade</div>
-                <div class="strat-sub">FOCUS</div>
-                <div class="strat-val">{focus}</div>
+                <div class="strat-val" style="color: {rc}; font-size: 20px;">{strat_db['risk']}</div>
+                <div class="strat-sub">DESCRIPTION</div>
+                <div class="strat-val" style="font-size:12px;">{strat_db['desc']}</div>
                 <div class="strat-sub">VETO STATUS</div>
                 <div class="strat-val">
                     HYG: {market_data['HYG']['change']:+.2f}% <br>
@@ -301,75 +412,52 @@ def main():
             """, unsafe_allow_html=True)
             
             # Target Acquisition
-            targets = {
-                "GOLDILOCKS": ("Tech, Semis", "Defensives"),
-                "LIQUIDITY": ("Crypto, Nasdaq", "Cash"),
-                "REFLATION": ("Energy, Banks", "Tech, Bonds"),
-                "NEUTRAL": ("Income Plays", "Directional"),
-                "RISK OFF": ("Cash, Volatility", "Everything Else")
-            }
-            longs, shorts = targets[active_regime]
-            st.success(f"**TARGET:** {longs}")
-            st.error(f"**AVOID:** {shorts}")
+            st.success(f"**TARGET:** {strat_db['longs']}")
+            st.error(f"**AVOID:** {strat_db['shorts']}")
 
         # 2. TACTICAL EXECUTION (Reactor Logic)
         with mc2:
             st.subheader("⚔️ Tactical Execution")
             view_mode = st.radio("Asset Class", ["INDEX (SPX)", "STOCKS"], horizontal=True, label_visibility="collapsed")
             
-            # Logic Tree
-            strat_name, strat_dte, strat_strikes, strat_logic = "", "", "", ""
-            
+            # Logic Tree for Index vs Stock
+            strat_info = {}
             if view_mode == "INDEX (SPX)":
                 # SPX REACTOR LOGIC (Matches HTML v10.0)
                 if active_regime == "RISK OFF":
-                    strat_name = "A14 Put BWB"; strat_dte = "14 DTE Entry / 7 DTE Exit"; strat_strikes = "ATM / -40 / -60 (Skip)"; strat_logic = "Crash catcher. Zero upside risk."
+                    strat_info = STRATEGY_DB["RISK OFF"]["index"]
                 elif active_regime == "NEUTRAL":
-                    strat_name = "TimeEdge Calendar"; strat_dte = "15 DTE / 7 DTE"; strat_strikes = "ATM Puts"; strat_logic = "Theta play. Low Vol environment."
+                    strat_info = STRATEGY_DB["NEUTRAL"]["index"]
                 elif iv_rank > 50: # High Vol
                     if skew_rank > 80:
-                        strat_name = "Put BWB (Skew Play)"; strat_dte = "21-30 DTE"; strat_strikes = "OTM Puts"; strat_logic = "High skew favors OTM butterflies."
+                        strat_info = {"strategy": "Put BWB (Skew Play)", "dte": "21-30 DTE", "strikes": "OTM Puts", "logic": "High skew favors OTM butterflies.", "screener": "N/A"}
                     else:
-                        strat_name = "Iron Condor"; strat_dte = "30-45 DTE"; strat_strikes = "15 Delta Wings"; strat_logic = "Classic volatility crush."
+                        strat_info = {"strategy": "Iron Condor", "dte": "30-45 DTE", "strikes": "15 Delta Wings", "logic": "Classic volatility crush.", "screener": "N/A"}
                 else: # Low Vol + Trend
                     if adx_val > 25:
-                        strat_name = "Directional Diagonal"; strat_dte = "Front 17 / Back 31"; strat_strikes = "Long 70D / Short 30D"; strat_logic = "Trend replacement."
+                        strat_info = STRATEGY_DB["GOLDILOCKS"]["index"]
                     elif active_regime == "LIQUIDITY":
-                        strat_name = "Flyagonal"; strat_dte = "7-14 DTE"; strat_strikes = "Call BWB + Put Diag"; strat_logic = "Capture drift."
+                        strat_info = STRATEGY_DB["LIQUIDITY"]["index"]
                     else:
-                        strat_name = "Double Diagonal"; strat_dte = "Front 17 / Back 31"; strat_strikes = "OTM"; strat_logic = "Low vol expansion play."
+                        strat_info = {"strategy": "Double Diagonal", "dte": "Front 17 / Back 31", "strikes": "OTM", "logic": "Low vol expansion play.", "screener": "N/A"}
             else:
-                # STOCK LOGIC
-                if active_regime == "GOLDILOCKS":
-                    strat_name = "Call Debit Spread"; strat_dte = "45-60 DTE"; strat_strikes = "60D / 30D"; strat_logic = "Directional efficiency."
-                elif active_regime == "LIQUIDITY":
-                    strat_name = "Zebra / Long Call"; strat_dte = "60+ DTE"; strat_strikes = "70D"; strat_logic = "Aggressive delta."
-                elif active_regime == "NEUTRAL":
-                    strat_name = "Iron Condor"; strat_dte = "30-45 DTE"; strat_strikes = "20 Delta"; strat_logic = "Range capture. Check earnings."
-                elif active_regime == "RISK OFF":
-                    strat_name = "Put Spread"; strat_dte = "60-90 DTE"; strat_strikes = "OTM"; strat_logic = "Hedge/Short."
-                elif active_regime == "REFLATION":
-                    strat_name = "Call Spread (Cyclicals)"; strat_dte = "45 DTE"; strat_strikes = "ATM"; strat_logic = "Rotation play."
+                strat_info = strat_db["stock"]
 
             st.markdown(f"""
             <div class="strat-card" style="border-color: {rc};">
-                <div class="strat-header" style="color: {rc};">{strat_name}</div>
+                <div class="strat-header" style="color: {rc};">{strat_info['strategy']}</div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-                    <div><div class="strat-sub">DTE</div><div class="strat-val">{strat_dte}</div></div>
-                    <div><div class="strat-sub">STRIKES</div><div class="strat-val">{strat_strikes}</div></div>
+                    <div><div class="strat-sub">DTE</div><div class="strat-val">{strat_info['dte']}</div></div>
+                    <div><div class="strat-sub">STRIKES</div><div class="strat-val">{strat_info['strikes']}</div></div>
                 </div>
                 <div style="background:#111; padding:10px; border-radius:6px; font-size:13px; color:#ccc;">
-                    <strong>LOGIC:</strong> {strat_logic}
+                    <strong>LOGIC:</strong> {strat_info['logic']}
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
-            # SCREENER CRITERIA
-            st.markdown("**🔍 Screener Logic:**")
-            if active_regime == "GOLDILOCKS": st.code("Price > SMA50 | RSI 50-70 | EPS > 0")
-            elif active_regime == "LIQUIDITY": st.code("ADX > 25 | RS > 80 | High Beta")
-            elif active_regime == "NEUTRAL": st.code("ADX < 20 | BB Width > 0.1 | IVR > 30")
-            elif active_regime == "RISK OFF": st.code("Price < SMA50 | Rel Vol > 2 | Debt/Eq > 2")
+            if 'screener' in strat_info and strat_info['screener'] != "N/A":
+                st.markdown(f"**🔍 Screener Logic:** `{strat_info['screener']}`")
 
     # === TAB 2: MARKET PULSE ===
     with t2:
@@ -379,13 +467,7 @@ def main():
             st.plotly_chart(create_sankey(market_data), use_container_width=True)
         with mp2:
             st.markdown("##### 🌡️ Heatmap")
-            try:
-                # Simple Sector Heatmap
-                sec_data = {k: market_data[k]['change'] for k in ['TECH','SEMIS','BANKS','ENERGY','HOME','UTIL','HEALTH','MAT']}
-                df_hm = pd.DataFrame(list(sec_data.items()), columns=['Sector', 'Change'])
-                fig_hm = px.treemap(df_hm, path=['Sector'], values=[1]*len(df_hm), color='Change', color_continuous_scale=['red', 'black', 'green'], color_continuous_midpoint=0)
-                st.plotly_chart(fig_hm, use_container_width=True)
-            except: st.error("Heatmap Data Error")
+            st.plotly_chart(create_heatmap(market_data), use_container_width=True)
             
         st.divider()
         st.markdown("##### 🎯 Momentum Quadrants (RRG)")
@@ -419,7 +501,7 @@ def main():
     with t4:
         st.markdown("### 📚 Strategy Reference Library")
         
-        with st.expander("🟣 TIMEZONE (Short-Term Income)", expanded=False):
+        with st.expander("🟣 TIMEZONE (Short-Term Income / RUT)", expanded=False):
             st.markdown("""
             **Concept:** High probability income strategy for RUT.
             
@@ -434,7 +516,7 @@ def main():
             * **Adjustment:** If market drops, roll calendar down.
             """)
             
-        with st.expander("🔵 TIMEEDGE (Double Calendar)", expanded=False):
+        with st.expander("🔵 TIMEEDGE (Double Calendar / SPX)", expanded=False):
             st.markdown("""
             **Concept:** Pure Theta play utilizing decay differential.
             
@@ -456,6 +538,9 @@ def main():
             * **Call Side:** 1 Long (ATM+10) / 2 Short (ATM+50) / 1 Long (ATM+60).
             * **Put Side:** Sell 1 Put (ATM-30) / Buy 1 Put (ATM-40) in later expiry.
             * **Entry:** 7-10 DTE.
+            
+            **Management:**
+            * Close at >4% Profit (Flash Win).
             """)
             
         with st.expander("🔴 A14 (Risk Off Hedge)", expanded=False):
@@ -468,6 +553,16 @@ def main():
             * **Strikes:** Long ATM / Short -40pts / Skip / Long -60pts.
             
             **Why:** Zero upside risk if filled for credit. Catches the crash.
+            """)
+            
+        with st.expander("⚠️ SPX INCOME REACTOR RULES", expanded=False):
+            st.markdown("""
+            **The Logic Tree:**
+            1. **High Vol (>50 IVR) + High Skew (>80):** Put BWB (A14) or Skip Trade.
+            2. **High Vol + Normal Skew:** Iron Condor / Strangle.
+            3. **Low Vol + Trend:** Directional Diagonal.
+            4. **Low Vol + Chop (Neutral):** TimeEdge Calendar.
+            5. **Liquidity Pump:** Flyagonal.
             """)
 
 if __name__ == "__main__":
