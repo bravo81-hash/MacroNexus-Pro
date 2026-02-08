@@ -4,7 +4,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import datetime
-import graphviz
 import numpy as np
 
 # --- 1. APP CONFIGURATION ---
@@ -83,6 +82,11 @@ st.markdown("""
         display: inline-block;
     }
     
+    /* Custom Tabs */
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; border-bottom: 1px solid #2A2E39; }
+    .stTabs [data-baseweb="tab"] { height: 45px; border-radius: 6px 6px 0 0; border: none; color: #8B9BB4; font-weight: 600; font-size: 14px; }
+    .stTabs [aria-selected="true"] { background-color: #1E222D; color: #FFF; border-bottom: 2px solid #3B82F6; }
+    
     /* Utilities */
     .badge-blue { background: rgba(59, 130, 246, 0.15); color: #60A5FA; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid rgba(59, 130, 246, 0.3); font-family: monospace; }
     .badge-green { background: rgba(16, 185, 129, 0.15); color: #34D399; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid rgba(16, 185, 129, 0.3); font-family: monospace; }
@@ -100,6 +104,8 @@ st.markdown("""
     }
     .context-header { font-weight: 700; color: #E5E7EB; margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
     
+    /* Expander Styling */
+    .streamlit-expanderHeader { font-weight: 700; color: #E5E7EB; background-color: #161920; border-radius: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -293,30 +299,108 @@ def get_val(data, key, timeframe):
 
 # --- 8. VISUALIZATION FUNCTIONS ---
 
-def plot_nexus_graph(data, timeframe):
-    dot = graphviz.Digraph(comment='The Macro Machine')
-    dot.attr(rankdir='LR', bgcolor='#0e1117')
-    dot.attr('node', shape='box', style='filled,rounded', fontname='Arial', fontcolor='white')
-    dot.attr('edge', color='#555555', arrowsize='0.8')
-    def get_col(k, invert=False):
-        c = get_val(data, k, timeframe)
-        if invert: return '#ef4444' if c > 0 else '#22c55e'
-        return '#22c55e' if c > 0 else '#ef4444'
-    us10y_c = get_val(data, "US10Y", timeframe)
-    dxy_c = get_val(data, "DXY", timeframe)
-    hyg_c = get_val(data, "HYG", timeframe)
-    lbl = "1d" if timeframe == 'Tactical (Daily)' else "1w"
-    dot.node('FED', 'FED POLICY', fillcolor='#3b82f6')
-    dot.node('US10Y', f'YIELDS ({lbl})\n{us10y_c:+.1f} bps', fillcolor=get_col('US10Y', True))
-    dot.node('DXY', f'DOLLAR ({lbl})\n{dxy_c:+.2f}%', fillcolor=get_col('DXY', True))
-    dot.node('HYG', f'CREDIT ({lbl})\n{hyg_c:+.2f}%', fillcolor=get_col('HYG', False))
-    dot.node('TECH', 'TECH (QQQ)', fillcolor=get_col('QQQ', False))
-    dot.node('GOLD', 'GOLD', fillcolor=get_col('GOLD', False))
-    dot.node('CRYPTO', 'CRYPTO', fillcolor=get_col('BTC', False))
-    dot.edge('FED', 'US10Y'); dot.edge('FED', 'DXY')
-    dot.edge('US10Y', 'TECH', color='#ef4444'); dot.edge('DXY', 'GOLD', color='#ef4444')
-    dot.edge('US10Y', 'HYG'); dot.edge('HYG', 'TECH'); dot.edge('HYG', 'CRYPTO')
-    return dot
+def plot_nexus_graph_dots(data, timeframe):
+    """
+    Creates the 'Dots' Plotly Network Graph requested in original specs.
+    Replaces Graphviz with Plotly for specific aesthetic.
+    """
+    # 1. Define Nodes & Positions (The "Map")
+    nodes = {
+        'US10Y': {'pos': (0, 0), 'label': 'Rates (^TNX)'}, 
+        'DXY': {'pos': (0.8, 0.8), 'label': 'Dollar (DXY)'},
+        'SPY': {'pos': (-0.8, 0.8), 'label': 'S&P 500 (SPY)'}, 
+        'QQQ': {'pos': (-1.2, 0.4), 'label': 'Nasdaq (QQQ)'},
+        'GOLD': {'pos': (0.8, -0.8), 'label': 'Gold (GLD)'}, 
+        'HYG': {'pos': (-0.4, -0.8), 'label': 'Credit (HYG)'},
+        'BTC': {'pos': (-1.5, 1.5), 'label': 'Bitcoin'}, 
+        'OIL': {'pos': (1.5, -0.4), 'label': 'Oil (USO)'},
+        'COPPER': {'pos': (1.2, -1.2), 'label': 'Copper'}, 
+        'IWM': {'pos': (-1.2, -1.0), 'label': 'Russell (IWM)'},
+        'SEMIS': {'pos': (-1.8, 0.8), 'label': 'Semis (SMH)'}, 
+        'ENERGY': {'pos': (1.8, -0.8), 'label': 'Energy (XLE)'},
+        'HOME': {'pos': (-0.8, -0.4), 'label': 'Housing (XHB)'},
+        'BANKS': {'pos': (1.5, -1.0), 'label': 'Banks (XLF)'}, 
+        'VIX': {'pos': (0, 1.5), 'label': 'Vol (^VIX)'}
+    }
+    
+    # 2. Define Edges (The "Plumbing")
+    edges = [
+        ('US10Y','QQQ'), ('US10Y','GOLD'), ('US10Y','HOME'), 
+        ('DXY','GOLD'), ('DXY','OIL'), 
+        ('HYG','SPY'), ('HYG','IWM'), ('HYG','BANKS'), 
+        ('QQQ','BTC'), ('QQQ','SEMIS'), 
+        ('COPPER','US10Y'), ('OIL','ENERGY'), ('VIX','SPY')
+    ]
+    
+    # 3. Build Plotly Data
+    edge_x, edge_y = [], []
+    for u, v in edges:
+        if u in nodes and v in nodes:
+            x0, y0 = nodes[u]['pos']
+            x1, y1 = nodes[v]['pos']
+            edge_x.extend([x0, x1, None])
+            edge_y.extend([y0, y1, None])
+
+    node_x, node_y, node_text, node_color, node_size = [], [], [], [], []
+    for key, info in nodes.items():
+        x, y = info['pos']
+        node_x.append(x); node_y.append(y)
+        
+        # Get Value
+        val = get_val(data, key, timeframe)
+        
+        # Color Logic
+        col = '#22c55e' if val > 0 else '#ef4444' # Green Up, Red Down
+        if val == 0: col = '#6b7280' # Grey
+        
+        # Invert for Drivers (Rates, DXY, VIX up is usually 'Bad' or Red contextually, 
+        # but to keep simple visual consistency with price change, we keep Green = Price Up)
+        
+        node_color.append(col)
+        node_size.append(45 if key in ['US10Y', 'DXY', 'HYG'] else 35)
+        
+        fmt_val = f"{val:+.2f}%"
+        if key == 'US10Y': fmt_val = f"{val:+.1f} bps"
+            
+        node_text.append(f"<b>{info['label']}</b><br>Chg: {fmt_val}")
+
+    # 4. Create Figure
+    fig = go.Figure()
+    
+    # Edges
+    fig.add_trace(go.Scatter(
+        x=edge_x, y=edge_y, 
+        mode='lines', 
+        line=dict(width=1, color='#4b5563'), 
+        hoverinfo='none'
+    ))
+    
+    # Nodes
+    fig.add_trace(go.Scatter(
+        x=node_x, y=node_y, 
+        mode='markers+text', 
+        text=[n.split('<br>')[0] for n in node_text], # Short label for chart
+        textposition="bottom center", 
+        hovertext=node_text, 
+        hoverinfo="text", 
+        marker=dict(
+            size=node_size, 
+            color=node_color, 
+            line=dict(width=2, color='white')
+        ), 
+        textfont=dict(size=11, color='white')
+    ))
+    
+    fig.update_layout(
+        showlegend=False, 
+        margin=dict(b=0,l=0,r=0,t=0), 
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.5, 2.5]), 
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.0, 2.0]), 
+        paper_bgcolor='rgba(0,0,0,0)', 
+        plot_bgcolor='rgba(0,0,0,0)', 
+        height=500
+    )
+    return fig
 
 def plot_sankey_sectors(data, timeframe):
     sector_keys = ['TECH','SEMIS','BANKS','ENERGY','HOME','UTIL','HEALTH','MAT','COMM']
@@ -701,17 +785,14 @@ Consult the <b>SPX Reactor</b>.
         col_graph, col_legend = st.columns([3, 1])
         
         with col_graph:
-            try:
-                # Dynamic Graph using timeframe
-                st.graphviz_chart(plot_nexus_graph(market_data, timeframe), use_container_width=True)
-            except:
-                st.warning("Graphviz executable not found.")
+            # THIS IS THE "DOTS" FEATURE REQUESTED
+            st.plotly_chart(plot_nexus_graph_dots(market_data, timeframe), use_container_width=True)
             
         with col_legend:
             st.markdown(f"""
 <div class="context-box" style="margin-top: 0;">
 <div class="context-header">💡 The Plumbing</div>
-<div>This graph visualizes the causal chain of the economy.</div>
+<div>This graph visualizes the causal chain of the economy using a network model.</div>
 <br>
 <div class="context-header">🟢 Green Node</div>
 <div>Asset is rising in the selected timeframe ({timeframe}).</div>
