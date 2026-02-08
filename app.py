@@ -16,6 +16,7 @@ st.set_page_config(
 )
 
 # --- 2. PROFESSIONAL STYLING (CSS) ---
+# Note: Indentation is stripped from HTML strings to prevent code block rendering issues
 st.markdown("""
 <style>
     /* Main Background & Text */
@@ -193,7 +194,6 @@ def determine_regime(data):
     return "NEUTRAL"
 
 # --- 6. STRATEGY DATABASE ---
-# Expanded with details from uploaded documents
 STRATEGIES = {
     "GOLDILOCKS": {
         "desc": "Low Vol + Steady Trend. Market climbing wall of worry.",
@@ -528,85 +528,177 @@ def main():
         
         with w1:
             st.markdown("""
-            <div class="metric-card" style="height: 200px;">
-                <div style="color: #F87171; font-weight: bold; margin-bottom: 10px;">PHASE 1: VETO</div>
-                <div style="font-size: 12px; color: #AAA;">
-                1. Check <b>HYG</b> (Credit). Is it crashing (< -0.5%)?
-                <br>2. Check <b>VIX</b>. Is it spiking (> 5%)?
-                <br><br>
-                <span style="color: #F87171;">If YES: STOP. Go to Risk Off.</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="metric-card" style="height: 200px;">
+<div style="color: #F87171; font-weight: bold; margin-bottom: 10px;">PHASE 1: VETO</div>
+<div style="font-size: 12px; color: #AAA;">
+1. Check <b>HYG</b> (Credit). Is it crashing (< -0.5%)?
+<br>2. Check <b>VIX</b>. Is it spiking (> 5%)?
+<br><br>
+<span style="color: #F87171;">If YES: STOP. Go to Risk Off.</span>
+</div>
+</div>
+""", unsafe_allow_html=True)
             
         with w2:
             st.markdown("""
-            <div class="metric-card" style="height: 200px;">
-                <div style="color: #FBBF24; font-weight: bold; margin-bottom: 10px;">PHASE 2: REGIME</div>
-                <div style="font-size: 12px; color: #AAA;">
-                Identify the "Tailwind".
-                <br>• <b>Goldilocks:</b> Growth + Low Vol
-                <br>• <b>Liquidity:</b> DXY Down + Crypto Up
-                <br>• <b>Reflation:</b> Yields + Oil Up
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="metric-card" style="height: 200px;">
+<div style="color: #FBBF24; font-weight: bold; margin-bottom: 10px;">PHASE 2: REGIME</div>
+<div style="font-size: 12px; color: #AAA;">
+Identify the "Tailwind".
+<br>• <b>Goldilocks:</b> Growth + Low Vol
+<br>• <b>Liquidity:</b> DXY Down + Crypto Up
+<br>• <b>Reflation:</b> Yields + Oil Up
+</div>
+</div>
+""", unsafe_allow_html=True)
             
         with w3:
             st.markdown("""
-            <div class="metric-card" style="height: 200px;">
-                <div style="color: #60A5FA; font-weight: bold; margin-bottom: 10px;">PHASE 3: SECTOR</div>
-                <div style="font-size: 12px; color: #AAA;">
-                Use the RRG & Sankey charts.
-                <br>• Find sectors moving from <b>Improving</b> to <b>Leading</b>.
-                <br>• Confirm capital flow matches Regime (e.g. Risk On = Tech inflows).
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="metric-card" style="height: 200px;">
+<div style="color: #60A5FA; font-weight: bold; margin-bottom: 10px;">PHASE 3: SECTOR</div>
+<div style="font-size: 12px; color: #AAA;">
+Use the RRG & Sankey charts.
+<br>• Find sectors moving from <b>Improving</b> to <b>Leading</b>.
+<br>• Confirm capital flow matches Regime (e.g. Risk On = Tech inflows).
+</div>
+</div>
+""", unsafe_allow_html=True)
             
         with w4:
             st.markdown("""
-            <div class="metric-card" style="height: 200px;">
-                <div style="color: #A78BFA; font-weight: bold; margin-bottom: 10px;">PHASE 4: TACTICS</div>
-                <div style="font-size: 12px; color: #AAA;">
-                Consult the <b>SPX Reactor</b>.
-                <br>• <b>Vol Check:</b> IV Rank > 50?
-                <br>• <b>Skew Check:</b> Crash risk?
-                <br>• <b>Trend Check:</b> ADX > 25?
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="metric-card" style="height: 200px;">
+<div style="color: #A78BFA; font-weight: bold; margin-bottom: 10px;">PHASE 4: TACTICS</div>
+<div style="font-size: 12px; color: #AAA;">
+Consult the <b>SPX Reactor</b>.
+<br>• <b>Vol Check:</b> IV Rank > 50?
+<br>• <b>Skew Check:</b> Crash risk?
+<br>• <b>Trend Check:</b> ADX > 25?
+</div>
+</div>
+""", unsafe_allow_html=True)
             
         with w5:
             st.markdown("""
-            <div class="metric-card" style="height: 200px;">
-                <div style="color: #34D399; font-weight: bold; margin-bottom: 10px;">PHASE 5: EXECUTE</div>
-                <div style="font-size: 12px; color: #AAA;">
-                3:00 PM EST Check.
-                <br>• Confirm Price Action.
-                <br>• Verify DTE matches plan.
-                <br>• <b>Enter Trade.</b>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="metric-card" style="height: 200px;">
+<div style="color: #34D399; font-weight: bold; margin-bottom: 10px;">PHASE 5: EXECUTE</div>
+<div style="font-size: 12px; color: #AAA;">
+3:00 PM EST Check.
+<br>• Confirm Price Action.
+<br>• Verify DTE matches plan.
+<br>• <b>Enter Trade.</b>
+</div>
+</div>
+""", unsafe_allow_html=True)
 
     # === TAB 3: MARKET PULSE (Charts) ===
     with tab_pulse:
-        st.subheader("🌊 Capital Flow")
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(plot_sankey_sectors(market_data, timeframe), use_container_width=True)
-        with c2: st.plotly_chart(plot_sankey_assets(market_data, timeframe), use_container_width=True)
         
+        # ROW 1: SANKEY SECTORS
+        st.subheader("🌊 Capital Flow: Sectors")
+        col_s1, col_s2 = st.columns([3, 1])
+        with col_s1:
+            st.plotly_chart(plot_sankey_sectors(market_data, timeframe), use_container_width=True)
+        with col_s2:
+            st.markdown(f"""
+<div class="context-box">
+<div class="context-header">💡 How to Read</div>
+<div>Sankey diagrams visualize the flow of capital. The "Source" (Left) are the worst performing sectors. The lines show where that capital is theoretically rotating into (The "Winners" on the Right).</div>
+<br>
+<div class="context-header">🔎 Analyst Note</div>
+<div>Thicker lines indicate stronger conviction in the rotation. If defensives (Util/Staples) are on the Right, it signals Fear.</div>
+</div>
+""", unsafe_allow_html=True)
+
+        st.divider()
+
+        # ROW 2: SANKEY ASSETS
+        st.subheader("🌍 Capital Flow: Macro Assets")
+        col_a1, col_a2 = st.columns([3, 1])
+        with col_a1:
+            st.plotly_chart(plot_sankey_assets(market_data, timeframe), use_container_width=True)
+        with col_a2:
+            st.markdown(f"""
+<div class="context-box">
+<div class="context-header">💡 How to Read</div>
+<div>Tracks rotation between Asset Classes. Are traders dumping Bonds (TLT) to buy Stocks (SPY)? Or dumping Stocks to buy Gold?</div>
+<br>
+<div class="context-header">🔎 Analyst Note</div>
+<div>Risk-On flows usually show DXY/TLT on the Left and SPY/BTC on the Right.</div>
+</div>
+""", unsafe_allow_html=True)
+            
+        st.divider()
+        
+        # ROW 3: CORRELATION
+        st.subheader("🔥 Inter-Correlation Matrix")
+        col_c1, col_c2 = st.columns([3, 1])
+        with col_c1:
+            st.plotly_chart(plot_correlation_heatmap(history_df), use_container_width=True)
+        with col_c2:
+            st.markdown(f"""
+<div class="context-box">
+<div class="context-header">💡 How to Read</div>
+<div>Red = Inverse Correlation (Hedge). Blue = Positive Correlation (Moving Together).</div>
+<br>
+<div class="context-header">🔎 Analyst Note</div>
+<div>Look for breakdowns. If SPY and TLT are both Blue, stock-bond correlation is positive (Risk Parity pain). Ideally, you want DXY to be Red vs SPY.</div>
+</div>
+""", unsafe_allow_html=True)
+
+        st.divider()
+        
+        # ROW 4: RRG
         st.subheader("🎯 Momentum Quadrants (RRG)")
         q1, q2 = st.columns(2)
-        with q1: st.plotly_chart(plot_rrg(market_data, 'SECTORS', timeframe), use_container_width=True)
-        with q2: st.plotly_chart(plot_rrg(market_data, 'ASSETS', timeframe), use_container_width=True)
+        with q1:
+            st.markdown("**SECTORS**")
+            st.plotly_chart(plot_rrg(market_data, 'SECTORS', timeframe), use_container_width=True)
+            st.markdown(f"""
+<div class="context-box">
+<div class="context-header">💡 RRG Logic</div>
+<div><strong>Leading (Green):</strong> Strong Trend + Momentum.<br><strong>Weakening (Yellow):</strong> Strong Trend, Momentum fading.<br><strong>Lagging (Red):</strong> Downtrend.<br><strong>Improving (Blue):</strong> Downtrend ending, momentum building.</div>
+</div>
+""", unsafe_allow_html=True)
+
+        with q2:
+            st.markdown("**MACRO ASSETS**")
+            st.plotly_chart(plot_rrg(market_data, 'ASSETS', timeframe), use_container_width=True)
+            st.markdown(f"""
+<div class="context-box">
+<div class="context-header">🔎 Rotation Watch</div>
+<div>The best trades are often found in the <strong>Improving (Blue)</strong> quadrant as they cross into Leading. Avoid assets deep in the Lagging (Red) quadrant unless you are short.</div>
+</div>
+""", unsafe_allow_html=True)
 
     # === TAB 4: MACRO MACHINE ===
     with tab_macro:
         st.subheader("🕸️ The Macro Transmission Mechanism")
-        try: st.graphviz_chart(plot_nexus_graph(market_data, timeframe), use_container_width=True)
-        except: st.warning("Graphviz executable not found.")
+        
+        col_graph, col_legend = st.columns([3, 1])
+        
+        with col_graph:
+            try:
+                # Dynamic Graph using timeframe
+                st.graphviz_chart(plot_nexus_graph(market_data, timeframe), use_container_width=True)
+            except:
+                st.warning("Graphviz executable not found.")
+            
+        with col_legend:
+            st.markdown(f"""
+<div class="context-box" style="margin-top: 0;">
+<div class="context-header">💡 The Plumbing</div>
+<div>This graph visualizes the causal chain of the economy.</div>
+<br>
+<div class="context-header">🟢 Green Node</div>
+<div>Asset is rising in the selected timeframe ({timeframe}).</div>
+<br>
+<div class="context-header">🔴 Red Node</div>
+<div>Asset is falling in the selected timeframe ({timeframe}).</div>
+<br>
+<div class="context-header">🔎 The Flow</div>
+<div>1. <strong>Fed Policy:</strong> Starts at US10Y and DXY.<br>2. <strong>The Pipe:</strong> HYG (Credit) transmits the signal.<br>3. <strong>The Bucket:</strong> Risk assets (Tech, Crypto) catch the flow.</div>
+</div>
+""", unsafe_allow_html=True)
 
     # === TAB 5: PLAYBOOK (Expanded) ===
     with tab_playbook:
