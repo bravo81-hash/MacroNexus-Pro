@@ -59,15 +59,6 @@ st.markdown("""
     .strat-subtitle { font-size: 11px; color: #6B7280; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin-bottom: 6px; }
     .strat-data { font-size: 15px; color: #E5E7EB; font-family: 'Inter', sans-serif; font-weight: 500; line-height: 1.4; }
     
-    /* Control Panel */
-    .control-container {
-        background-color: #161920;
-        border: 1px solid #2A2E39;
-        border-radius: 10px;
-        padding: 15px 25px;
-        margin-bottom: 25px;
-    }
-    
     /* Regime Badge */
     .regime-badge {
         padding: 6px 16px;
@@ -121,8 +112,8 @@ TICKERS = {
     # Crypto
     'BTC': 'BTC-USD'
 }
-# Robust Fallbacks for unreliable tickers
-FALLBACKS = {'DXY': 'UUP', 'VIX': 'VIXY', 'RUT': 'IWM'}
+# Fallbacks for reliable tickers - Removed VIXY/UUP to prevent skewed data
+FALLBACKS = {'RUT': 'IWM'} 
 
 # --- 4. DATA ENGINE (ROBUST BATCH + FALLBACKS) ---
 @st.cache_data(ttl=300)
@@ -154,22 +145,6 @@ def fetch_market_data():
     # Helper to handle MultiIndex vs Single Index return from yfinance
     is_multi = isinstance(df_batch.columns, pd.MultiIndex)
     
-    def extract_series(sym):
-        try:
-            if is_multi:
-                if sym in df_batch.columns.levels[0]:
-                    return df_batch[sym]['Close'].dropna()
-            else:
-                # If only 1 ticker was requested/returned valid
-                # columns might be just ['Open', 'Close'...] or mapped if single
-                # For safety in batch mode, we assume MultiIndex usually, 
-                # but if single symbol batch, it might differ.
-                # Simplification: If batch has >1 symbol it's multi. 
-                pass
-        except:
-            return None
-        return None
-
     # 2. Process Data
     for key, primary_symbol in primary_map.items():
         valid_series = None
@@ -202,32 +177,47 @@ def fetch_market_data():
         curr = valid_series.iloc[-1]
         prev = valid_series.iloc[-2]
         
-        # Weekly Resampling (Correctness Fix)
+        # Weekly Resampling (Correctness Fix: Week-to-Date / WTD)
         # Resample to Friday closes to get true weekly structural data
         weekly_series = valid_series.resample('W-FRI').last()
+        
         if len(weekly_series) >= 2:
-            # We want change from the *previous* full week close
-            # If current day is mid-week, compare to last Friday
-            curr_w = weekly_series.iloc[-1] # Current week (partial) or last Fri
-            prev_w = weekly_series.iloc[-2] # Previous Friday
+            # Current value is the latest close (could be mid-week)
+            curr_w = valid_series.iloc[-1]
             
-            # If current data point is same date as last resample (Friday), use it
-            # If current data point is Tuesday, curr_w is Tuesday (partial).
-            # This logic holds for "Current Weekly Candle"
+            # Previous value is the LAST COMPLETED WEEK (Friday close)
+            # Logic: If today is Friday and market closed, weekly_series[-1] is today.
+            # If today is Tuesday, weekly_series[-1] is THIS WEEK (partial).
+            # To get "Previous Weekly Close", we look at the second to last bucket if current bucket is active?
+            # Safer way: Find the last timestamp <= (Today - Days since Monday).
+            
+            # Simplified WTD Logic:
+            # Compare Current Price vs Last Friday's Close.
+            # weekly_series includes current week partial.
+            # So weekly_series.iloc[-2] is the previous week's close.
+            
+            # Check if last point in weekly series is strictly before current data point date (completed week)
+            # or same week. yfinance resample puts end-of-period date.
+            
+            prev_w_close = weekly_series.iloc[-2] # Last completed week close
+            curr_wtd = curr # Current live price
+            
+            # Edge case: If today is a new week start and data just came in, weekly_series might have just started new bin.
+            
         else:
-            curr_w = curr
-            prev_w = valid_series.iloc[-6] # Fallback
+            curr_wtd = curr
+            prev_w_close = valid_series.iloc[-6] # Fallback
             
         # TNX Logic Fix
         if key == 'US10Y':
             display_price = curr / 10.0 # 42.5 -> 4.25%
             chg_d = (curr - prev) * 10 # 0.5 diff -> 5 bps
-            chg_w = (curr_w - prev_w) * 10 
+            chg_w = (curr_wtd - prev_w_close) * 10 
             disp_fmt = "bps"
         else:
             display_price = curr
             chg_d = ((curr - prev) / prev) * 100
-            chg_w = ((curr_w - prev_w) / prev_w) * 100
+            chg_w = ((curr_wtd - prev_w_close) / prev_w_close) * 100
             disp_fmt = "%"
             
         data[key] = {
@@ -510,8 +500,8 @@ def plot_sankey_assets(data, timeframe):
 
 def plot_rrg(full_hist, category, timeframe):
     """
-    RRG Logic calculated dynamically from Full History.
-    Ensures math matches the Timeframe.
+    Trend/Momentum Quadrant (RRG-style).
+    Uses Rate of Change (ROC) for Momentum to ensure quant accuracy.
     """
     items = []
     if category == 'SECTORS': keys = ['TECH','SEMIS','BANKS','ENERGY','HOME','UTIL','STAPLES','DISC','IND','HEALTH','MAT','COMM','RE']
@@ -538,11 +528,13 @@ def plot_rrg(full_hist, category, timeframe):
         sma_long = series.rolling(window=trend_win).mean().iloc[-1]
         trend_score = ((curr / sma_long) - 1) * 100
         
-        # 2. Momentum Score (Price vs Short Term SMA - Mean Reversion Proxy)
-        # Or better: ROC (Rate of Change)
-        # Using ROC per audit recommendation for better momentum proxy
-        roc = ((curr / series.iloc[-mom_win]) - 1) * 100
-        mom_score = roc
+        # 2. Momentum Score (Rate of Change / ROC)
+        # Using (mom_win + 1) offset to get correct N-day ROC
+        try:
+            prev_mom_price = series.iloc[-(mom_win + 1)]
+            mom_score = ((curr / prev_mom_price) - 1) * 100
+        except:
+            mom_score = 0
         
         # Quadrant Color Logic
         if trend_score > 0 and mom_score > 0: c = '#22c55e' # LEADING (Green)
@@ -609,16 +601,6 @@ def main():
             st.error(error_msg)
         
     # --- TOP METRICS BAR ---
-    # Metric logic moved inside main to access timeframe state if needed, 
-    # but currently we need to render metrics *before* controls usually.
-    # To fix the "Metrics ignore timeframe" issue, we need to know the timeframe first.
-    # So we move Controls UP or use default. 
-    # Current design: Controls are below Metrics. 
-    # Fix: We will render controls first in code order but place them differently, 
-    # OR simpler: Metrics use the default 'Daily' until changed?
-    # Better: Put Controls in Sidebar or just accept that Top Bar is "Live Daily Dashboard".
-    # Decision: Keep Top Bar as "Live Daily" (Standard practice) to avoid confusion.
-    
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     def metric_tile(col, label, key):
         d = market_data.get(key, {})
@@ -647,9 +629,8 @@ def main():
     metric_tile(c4, "Dollar (DXY)", "DXY"); metric_tile(c5, "Oil", "OIL"); metric_tile(c6, "Bitcoin", "BTC")
 
     # --- MAIN CONTROLS ---
-    # Consolidated Control Container
-    with st.container():
-        st.markdown('<div class="control-container">', unsafe_allow_html=True)
+    # Stable Control Container
+    with st.container(border=True):
         ctrl1, ctrl2, ctrl3 = st.columns([1, 1, 2])
         
         with ctrl2:
@@ -673,8 +654,6 @@ def main():
                 status_text = "ACTIVE"
                 
             st.markdown(f"""<div style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 15px;"><div style="text-align: right;"><div style="font-size: 10px; color: #8B9BB4; letter-spacing: 1px;">SYSTEM STATUS</div><div style="font-size: 14px; font-weight: bold; color: {rc};">{status_text}</div></div><div class="regime-badge" style="background: {rc}22; color: {rc}; border: 1px solid {rc};">{active_regime}</div></div>""", unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
 
     # --- DATA ERROR BANNER ---
     if auto_regime == "DATA ERROR" and not override:
@@ -916,7 +895,7 @@ Consult the <b>SPX Reactor</b>.
         st.divider()
         
         # ROW 4: RRG
-        st.subheader("🎯 Momentum Quadrants (RRG)")
+        st.subheader("🎯 Trend/Momentum Quadrant (RRG-Proxy)")
         q1, q2 = st.columns(2)
         with q1:
             st.markdown("**SECTORS**")
@@ -924,8 +903,8 @@ Consult the <b>SPX Reactor</b>.
             st.plotly_chart(plot_rrg(full_hist, 'SECTORS', timeframe), use_container_width=True)
             st.markdown(f"""
 <div class="context-box">
-<div class="context-header">💡 RRG Logic</div>
-<div><strong>Leading (Green):</strong> Strong Trend + Momentum.<br><strong>Weakening (Yellow):</strong> Strong Trend, Momentum fading.<br><strong>Lagging (Red):</strong> Downtrend.<br><strong>Improving (Blue):</strong> Downtrend ending, momentum building.</div>
+<div class="context-header">💡 Logic</div>
+<div><strong>Leading (Green):</strong> Trend & Momentum +.<br><strong>Weakening (Yellow):</strong> Trend +, Momentum -.<br><strong>Lagging (Red):</strong> Trend & Momentum -.<br><strong>Improving (Blue):</strong> Trend -, Momentum +.</div>
 </div>
 """, unsafe_allow_html=True)
 
