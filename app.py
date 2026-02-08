@@ -16,7 +16,6 @@ st.set_page_config(
 )
 
 # --- 2. PROFESSIONAL STYLING (CSS) ---
-# Note: Indentation is stripped from HTML strings to prevent code block rendering issues
 st.markdown("""
 <style>
     /* Main Background & Text */
@@ -60,7 +59,6 @@ st.markdown("""
     .strat-section { margin-bottom: 15px; }
     .strat-subtitle { font-size: 11px; color: #6B7280; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin-bottom: 6px; }
     .strat-data { font-size: 15px; color: #E5E7EB; font-family: 'Inter', sans-serif; font-weight: 500; line-height: 1.4; }
-    .strat-highlight { color: #fff; font-weight: 600; }
     
     /* Control Panel */
     .control-bar {
@@ -85,11 +83,6 @@ st.markdown("""
         display: inline-block;
     }
     
-    /* Custom Tabs */
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; border-bottom: 1px solid #2A2E39; }
-    .stTabs [data-baseweb="tab"] { height: 45px; border-radius: 6px 6px 0 0; border: none; color: #8B9BB4; font-weight: 600; font-size: 14px; }
-    .stTabs [aria-selected="true"] { background-color: #1E222D; color: #FFF; border-bottom: 2px solid #3B82F6; }
-    
     /* Utilities */
     .badge-blue { background: rgba(59, 130, 246, 0.15); color: #60A5FA; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid rgba(59, 130, 246, 0.3); font-family: monospace; }
     .badge-green { background: rgba(16, 185, 129, 0.15); color: #34D399; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid rgba(16, 185, 129, 0.3); font-family: monospace; }
@@ -98,25 +91,24 @@ st.markdown("""
     .context-box {
         background: rgba(255,255,255,0.03);
         border-left: 3px solid #3B82F6;
-        padding: 12px;
+        padding: 15px;
         font-size: 13px;
         color: #9CA3AF;
-        margin-top: 10px;
+        margin-top: 0px;
         border-radius: 0 6px 6px 0;
+        height: 100%;
     }
-    .context-header { font-weight: 700; color: #E5E7EB; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; }
+    .context-header { font-weight: 700; color: #E5E7EB; margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
     
-    /* Expander Styling */
-    .streamlit-expanderHeader { font-weight: 700; color: #E5E7EB; background-color: #161920; border-radius: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- 3. DATA UNIVERSE ---
 TICKERS = {
     # Drivers
-    'US10Y': '^TNX', 'DXY': 'DX-Y.NYB', 'VIX': '^VIX', 'HYG': 'HYG', 'TLT': 'TLT', 'TIP': 'TIP',
+    'US10Y': '^TNX', 'DXY': 'DX-Y.NYB', 'VIX': '^VIX', 'HYG': 'HYG', 'TLT': 'TLT', 
     # Commodities
-    'GOLD': 'GLD', 'OIL': 'USO', 'COPPER': 'CPER', 'NATGAS': 'UNG',
+    'GOLD': 'GLD', 'OIL': 'USO', 'COPPER': 'CPER', 
     # Indices
     'SPY': 'SPY', 'QQQ': 'QQQ', 'IWM': 'IWM', 'RUT': '^RUT',
     # Sectors
@@ -146,34 +138,43 @@ def fetch_market_data():
             
             hist_clean = hist['Close'].dropna()
             
-            if not hist_clean.empty and len(hist_clean) >= 22:
+            if not hist_clean.empty and len(hist_clean) >= 50:
                 history_data[key] = hist_clean
                 
                 curr = hist_clean.iloc[-1]
                 prev = hist_clean.iloc[-2]
+                
+                # Calculations for RRG (Trend vs Momentum)
+                # Trend = Price vs 20 SMA
+                sma20 = hist_clean.rolling(window=20).mean().iloc[-1]
+                trend_score = ((curr / sma20) - 1) * 100
+                
+                # Momentum = Price vs 5 SMA
+                sma5 = hist_clean.rolling(window=5).mean().iloc[-1]
+                mom_score = ((curr / sma5) - 1) * 100
+                
+                # Standard Changes
                 prev_w = hist_clean.iloc[-6] 
-                prev_m = hist_clean.iloc[-21] 
                 
                 if key == 'US10Y':
                     chg_d = (curr - prev) * 10 
                     chg_w = (curr - prev_w) * 10
-                    chg_m = (curr - prev_m) * 10
                     disp_fmt = "bps"
                 else:
                     chg_d = ((curr - prev) / prev) * 100
                     chg_w = ((curr - prev_w) / prev_w) * 100
-                    chg_m = ((curr - prev_m) / prev_m) * 100
                     disp_fmt = "%"
                 
                 data[key] = {
                     'price': curr, 'change': chg_d, 
-                    'change_w': chg_w, 'change_m': chg_m,
+                    'change_w': chg_w,
+                    'trend_score': trend_score, 'mom_score': mom_score,
                     'symbol': symbol, 'fmt': disp_fmt, 'valid': True
                 }
             else:
-                data[key] = {'price': 0, 'change': 0, 'change_w': 0, 'change_m': 0, 'symbol': symbol, 'fmt': "%", 'valid': False}
+                data[key] = {'price': 0, 'change': 0, 'change_w': 0, 'trend_score':0, 'mom_score':0, 'symbol': symbol, 'fmt': "%", 'valid': False}
         except:
-            data[key] = {'price': 0, 'change': 0, 'change_w': 0, 'change_m': 0, 'symbol': symbol, 'fmt': "%", 'valid': False}
+            data[key] = {'price': 0, 'change': 0, 'change_w': 0, 'trend_score':0, 'mom_score':0, 'symbol': symbol, 'fmt': "%", 'valid': False}
             
     df_history = pd.DataFrame(history_data)
     return data, df_history
@@ -193,7 +194,7 @@ def determine_regime(data):
     if vix < 0 and abs(us10y) < 5.0 and hyg > -0.1: return "GOLDILOCKS"
     return "NEUTRAL"
 
-# --- 6. STRATEGY DATABASE ---
+# --- 6. STRATEGY DATABASE (Expanded) ---
 STRATEGIES = {
     "GOLDILOCKS": {
         "desc": "Low Vol + Steady Trend. Market climbing wall of worry.",
@@ -205,9 +206,9 @@ STRATEGIES = {
             "notes": "Stock replacement. Trend (Delta) + Decay (Theta). Upside is uncapped."
         },
         "stock": {
-            "strat": "Call Debit Spreads / Long Calls",
+            "strat": "Call Debit Spreads",
             "dte": "45-60 DTE",
-            "setup": "Buy 60D / Sell 30D (Spread) OR Pure Long 70D",
+            "setup": "Buy 60D / Sell 30D (Spread)",
             "notes": "Focus on Relative Strength Leaders (Tech, Semis). Use pullbacks to EMA21."
         },
         "longs": "TECH, SEMIS, DISC", "shorts": "VIX, TLT"
@@ -218,14 +219,14 @@ STRATEGIES = {
         "index": {
             "strat": "Flyagonal (Drift)", 
             "dte": "Entry 7-10 DTE", 
-            "setup": "Upside: Call BWB (Long +10 / Short 2x +50 / Long +60). Downside: Put Diagonal (-30/-40).", 
-            "notes": "Captures the drift. Upside tent (Call BWB) funds the downside floor. Target 4% Flash Win."
+            "setup": "Upside: Call BWB (Long +10 / Short 2x +50 / Long +60). Downside: Put Diagonal.", 
+            "notes": "Captures the drift. Upside tent funds the downside floor. Target 4% Flash Win."
         },
         "stock": {
             "strat": "Risk Reversals",
             "dte": "60 DTE",
             "setup": "Sell OTM Put / Buy OTM Call",
-            "notes": "Funding long delta with short volatility. Best for High Beta (Crypto proxies, Semis)."
+            "notes": "Funding long delta with short volatility. Best for High Beta (Crypto proxies)."
         },
         "longs": "BTC, SEMIS, QQQ", "shorts": "DXY, CASH"
     },
@@ -239,7 +240,7 @@ STRATEGIES = {
             "notes": "Focus on Russell 2000 (IWM). Avoid long duration Tech (QQQ) as rates rise."
         },
         "stock": {
-            "strat": "Long Stock / Cash Secured Puts",
+            "strat": "Cash Secured Puts",
             "dte": "30-45 DTE",
             "setup": "Sell 30D Puts on Energy/Banks",
             "notes": "Energy (XLE) and Banks (XLF) benefit from rising yields. Sell premium to acquire."
@@ -253,7 +254,7 @@ STRATEGIES = {
             "strat": "TimeEdge (SPX) / TimeZone (RUT)", 
             "dte": "Entry 15 / Exit 7", 
             "setup": "Put Calendar Spread (ATM) or Double Calendar", 
-            "notes": "Pure Theta play. Sell 15 DTE / Buy 22+ DTE. Requires VIX < 20. Exit if price hits break-evens."
+            "notes": "Pure Theta play. Sell 15 DTE / Buy 22+ DTE. Requires VIX < 20."
         },
         "stock": {
             "strat": "Iron Condor",
@@ -276,7 +277,7 @@ STRATEGIES = {
             "strat": "Put Debit Spreads",
             "dte": "60 DTE",
             "setup": "Buy 40D / Sell 15D",
-            "notes": "Directional downside. Selling the 15D put reduces cost and offsets IV crush if market stabilizes."
+            "notes": "Directional downside. Selling the 15D put reduces cost and offsets IV crush."
         },
         "longs": "VIX, DXY", "shorts": "SPY, IWM, HYG"
     }
@@ -355,17 +356,40 @@ def plot_rrg(data, category, view):
     items = []
     if category == 'SECTORS': keys = ['TECH','SEMIS','BANKS','ENERGY','HOME','UTIL','STAPLES','DISC','IND','HEALTH','MAT','COMM','RE']
     else: keys = ['SPY','QQQ','IWM','GOLD','BTC','TLT','DXY','HYG','OIL']
+    
     for k in keys:
         d = data.get(k, {})
-        if view == 'Tactical (Daily)': x, y = d.get('change_w', 0), d.get('change', 0)
-        else: x, y = d.get('change_m', 0), d.get('change_w', 0)
-        c = '#22c55e' if x>0 and y>0 else '#3b82f6' if x<0 and y>0 else '#f59e0b' if x>0 and y<0 else '#ef4444'
+        # RRG LOGIC FIX:
+        # X-Axis = Trend (Longer MA comparison)
+        # Y-Axis = Momentum (Shorter MA comparison)
+        # This provides a more accurate "Rotation" view than just price change
+        x = d.get('trend_score', 0) 
+        y = d.get('mom_score', 0)
+        
+        # Quadrant Color Logic
+        if x > 0 and y > 0: c = '#22c55e' # LEADING (Green)
+        elif x < 0 and y > 0: c = '#3b82f6' # IMPROVING (Blue)
+        elif x > 0 and y < 0: c = '#f59e0b' # WEAKENING (Yellow)
+        else: c = '#ef4444' # LAGGING (Red)
+        
         items.append({'Symbol': k, 'Trend': x, 'Momentum': y, 'Color': c})
+        
     df = pd.DataFrame(items)
     fig = px.scatter(df, x='Trend', y='Momentum', text='Symbol', color='Color', color_discrete_map="identity")
     fig.update_traces(textposition='top center', marker=dict(size=14, line=dict(width=1, color='white')))
-    fig.add_hline(y=0, line_dash="dot", line_color="#555"); fig.add_vline(x=0, line_dash="dot", line_color="#555")
-    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(color='#ccc'), showlegend=False, height=450, xaxis=dict(showgrid=True, gridcolor='#333'), yaxis=dict(showgrid=True, gridcolor='#333'))
+    
+    # Quadrant Lines
+    fig.add_hline(y=0, line_dash="dot", line_color="#555")
+    fig.add_vline(x=0, line_dash="dot", line_color="#555")
+    
+    limit = 5 # Fixed scale for better visualization of rotation
+    fig.update_layout(
+        xaxis=dict(range=[-limit, limit], zeroline=False, showgrid=True, gridcolor='#333', title="Trend (Price vs SMA20)"),
+        yaxis=dict(range=[-limit, limit], zeroline=False, showgrid=True, gridcolor='#333', title="Momentum (Price vs SMA5)"),
+        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#ccc'), showlegend=False, height=450, 
+        margin=dict(l=20, r=20, t=20, b=20)
+    )
     return fig
 
 def plot_correlation_heatmap(history_df):
@@ -427,7 +451,7 @@ def main():
         # TELEMETRY
         with st.expander("🎛️ SPX Income Reactor Telemetry (Manual Input)", expanded=True):
             tc1, tc2, tc3, tc4 = st.columns(4)
-            asset_mode = tc1.radio("Asset Class", ["INDEX (SPX/RUT)", "STOCKS"], horizontal=True) # TOGGLE RE-ADDED
+            asset_mode = tc1.radio("Asset Class", ["INDEX (SPX/RUT)", "STOCKS"], horizontal=True) # TOGGLE IS HERE
             iv_rank = tc2.slider("IV Rank (Percentile)", 0, 100, 45)
             skew_rank = tc3.slider("Skew Rank", 0, 100, 50)
             adx_val = tc4.slider("Trend ADX", 0, 60, 20)
@@ -528,7 +552,7 @@ def main():
         
         with w1:
             st.markdown("""
-<div class="metric-card" style="height: 200px;">
+<div class="metric-card" style="height: 250px;">
 <div style="color: #F87171; font-weight: bold; margin-bottom: 10px;">PHASE 1: VETO</div>
 <div style="font-size: 12px; color: #AAA;">
 1. Check <b>HYG</b> (Credit). Is it crashing (< -0.5%)?
@@ -541,7 +565,7 @@ def main():
             
         with w2:
             st.markdown("""
-<div class="metric-card" style="height: 200px;">
+<div class="metric-card" style="height: 250px;">
 <div style="color: #FBBF24; font-weight: bold; margin-bottom: 10px;">PHASE 2: REGIME</div>
 <div style="font-size: 12px; color: #AAA;">
 Identify the "Tailwind".
@@ -554,7 +578,7 @@ Identify the "Tailwind".
             
         with w3:
             st.markdown("""
-<div class="metric-card" style="height: 200px;">
+<div class="metric-card" style="height: 250px;">
 <div style="color: #60A5FA; font-weight: bold; margin-bottom: 10px;">PHASE 3: SECTOR</div>
 <div style="font-size: 12px; color: #AAA;">
 Use the RRG & Sankey charts.
@@ -566,7 +590,7 @@ Use the RRG & Sankey charts.
             
         with w4:
             st.markdown("""
-<div class="metric-card" style="height: 200px;">
+<div class="metric-card" style="height: 250px;">
 <div style="color: #A78BFA; font-weight: bold; margin-bottom: 10px;">PHASE 4: TACTICS</div>
 <div style="font-size: 12px; color: #AAA;">
 Consult the <b>SPX Reactor</b>.
@@ -579,7 +603,7 @@ Consult the <b>SPX Reactor</b>.
             
         with w5:
             st.markdown("""
-<div class="metric-card" style="height: 200px;">
+<div class="metric-card" style="height: 250px;">
 <div style="color: #34D399; font-weight: bold; margin-bottom: 10px;">PHASE 5: EXECUTE</div>
 <div style="font-size: 12px; color: #AAA;">
 3:00 PM EST Check.
@@ -745,6 +769,26 @@ Consult the <b>SPX Reactor</b>.
             * **Adjustment:** If market drops, roll the Calendar Put down or add a Debit Spread.
             """)
             
+        with st.expander("🔵 TIMEEDGE (SPX Neutral)", expanded=False):
+            st.markdown("""
+            ### TimeEdge: Pure Theta Decay
+            **Concept:** Exploiting the decay differential between Front and Back months in SPX.
+            
+            **1. Structure**
+            * **Double Calendar:** Sell 15 DTE / Buy 43 DTE (approx).
+            * **Strikes:** ATM or slightly OTM.
+            
+            **2. Entry Protocol**
+            * **Time:** Thursday Afternoon (3:30 PM).
+            * **DTE:** 15 DTE front month.
+            
+            **3. Rules**
+            * **Management:** No Touch ideally.
+            * **Profit Target:** 10%.
+            * **Stop Loss:** 10%.
+            * **Exit:** Hard stop at 1 DTE (but usually earlier).
+            """)
+
         with st.expander("🌊 FLYAGONAL (Liquidity Drift)", expanded=False):
             st.markdown("""
             ### Flyagonal: The Drift Catcher
