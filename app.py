@@ -121,131 +121,156 @@ TICKERS = {
     # Crypto
     'BTC': 'BTC-USD'
 }
+# Robust Fallbacks for unreliable tickers
 FALLBACKS = {'DXY': 'UUP', 'VIX': 'VIXY', 'RUT': 'IWM'}
 
-# --- 4. DATA ENGINE (BATCH OPTIMIZED) ---
+# --- 4. DATA ENGINE (ROBUST BATCH + FALLBACKS) ---
 @st.cache_data(ttl=300)
 def fetch_market_data():
     """
-    Fetches data using batched download for performance and stability.
-    Returns:
-        data: Dict of current metrics
-        history_df: DataFrame of close prices for correlation
-        full_hist: Dict of Series for RRG calculation
+    Downloads Primary AND Fallback symbols in one batch.
+    Maps data to keys, checking validity and failing over automatically.
+    Performs safe Weekly resampling.
     """
-    symbols = list(TICKERS.values())
+    primary_map = {k: v for k, v in TICKERS.items()}
+    fallback_map = FALLBACKS
     
-    # 1. Batch Download (Threaded)
+    # 1. Download ALL symbols (Primary + Fallbacks) at once
+    all_symbols = list(set(list(primary_map.values()) + list(fallback_map.values())))
+    
     try:
-        # Download 1 year to ensure enough data for weekly SMAs
-        df_batch = yf.download(symbols, period="1y", group_by='ticker', threads=True, progress=False)
+        # Download 1y to allow for proper SMA calculation and weekly resampling
+        df_batch = yf.download(all_symbols, period="1y", group_by='ticker', threads=True, progress=False)
     except Exception as e:
-        st.error(f"Critical Data Error: {e}")
-        return {}, pd.DataFrame(), {}
+        return {}, pd.DataFrame(), {}, f"API Error: {str(e)}"
+
+    if df_batch is None or df_batch.empty:
+        return {}, pd.DataFrame(), {}, "No data returned from API. Check connection."
 
     data = {}
-    history_data = {} # For Correlation
-    full_hist = {}    # For RRG calculations
+    history_data = {}
+    full_hist = {}
     
-    # Map back from Symbol to Key (e.g. ^TNX -> US10Y)
-    symbol_to_key = {v: k for k, v in TICKERS.items()}
+    # Helper to handle MultiIndex vs Single Index return from yfinance
+    is_multi = isinstance(df_batch.columns, pd.MultiIndex)
     
-    for symbol, key in symbol_to_key.items():
+    def extract_series(sym):
         try:
-            # Handle Multi-Level Index from Batch Download
-            if len(symbols) > 1:
-                if symbol not in df_batch.columns.levels[0]:
-                    # Try fallback
-                    if key in FALLBACKS:
-                        # We won't re-download in loop to avoid blocking, just skip or mark invalid
-                        data[key] = {'valid': False, 'symbol': symbol}
-                        continue
-                    else:
-                        data[key] = {'valid': False, 'symbol': symbol}
-                        continue
-                hist = df_batch[symbol]['Close'].dropna()
+            if is_multi:
+                if sym in df_batch.columns.levels[0]:
+                    return df_batch[sym]['Close'].dropna()
             else:
-                hist = df_batch['Close'].dropna()
+                # If only 1 ticker was requested/returned valid
+                # columns might be just ['Open', 'Close'...] or mapped if single
+                # For safety in batch mode, we assume MultiIndex usually, 
+                # but if single symbol batch, it might differ.
+                # Simplification: If batch has >1 symbol it's multi. 
+                pass
+        except:
+            return None
+        return None
 
-            if len(hist) < 50:
-                data[key] = {'valid': False, 'symbol': symbol}
-                continue
+    # 2. Process Data
+    for key, primary_symbol in primary_map.items():
+        valid_series = None
+        used_symbol = primary_symbol
+        
+        # A. Try Primary
+        if is_multi and primary_symbol in df_batch.columns.get_level_values(0):
+            s = df_batch[primary_symbol]['Close'].dropna()
+            if len(s) >= 50: 
+                valid_series = s
+        
+        # B. Try Fallback if Primary Invalid
+        if valid_series is None and key in fallback_map:
+            fb_sym = fallback_map[key]
+            if is_multi and fb_sym in df_batch.columns.get_level_values(0):
+                s = df_batch[fb_sym]['Close'].dropna()
+                if len(s) >= 50:
+                    valid_series = s
+                    used_symbol = fb_sym # Switch display symbol
+        
+        # C. Mark Invalid
+        if valid_series is None:
+            data[key] = {'valid': False, 'symbol': primary_symbol}
+            continue
 
-            # Store for downstream
-            history_data[key] = hist
-            full_hist[key] = hist
+        # D. Metrics Calculation
+        history_data[key] = valid_series
+        full_hist[key] = valid_series
+        
+        curr = valid_series.iloc[-1]
+        prev = valid_series.iloc[-2]
+        
+        # Weekly Resampling (Correctness Fix)
+        # Resample to Friday closes to get true weekly structural data
+        weekly_series = valid_series.resample('W-FRI').last()
+        if len(weekly_series) >= 2:
+            # We want change from the *previous* full week close
+            # If current day is mid-week, compare to last Friday
+            curr_w = weekly_series.iloc[-1] # Current week (partial) or last Fri
+            prev_w = weekly_series.iloc[-2] # Previous Friday
             
-            # --- METRICS ---
-            curr = hist.iloc[-1]
-            prev = hist.iloc[-2]
-            prev_w = hist.iloc[-6] # ~1 week ago
+            # If current data point is same date as last resample (Friday), use it
+            # If current data point is Tuesday, curr_w is Tuesday (partial).
+            # This logic holds for "Current Weekly Candle"
+        else:
+            curr_w = curr
+            prev_w = valid_series.iloc[-6] # Fallback
             
-            # 2. TNX Normalization Logic (Critical Fix)
-            if key == 'US10Y':
-                # Yahoo returns 42.50 for 4.25%. 
-                # We store normalized price for Display, but use Raw for changes logic if needed.
-                # Actually, standard is to display 4.25.
-                display_price = curr / 10.0 
-                
-                # Change in BPS: (42.50 - 42.00) * 10 = 5.0 bps
-                chg_d = (curr - prev) * 10
-                chg_w = (curr - prev_w) * 10
-                disp_fmt = "bps"
-            else:
-                display_price = curr
-                chg_d = ((curr - prev) / prev) * 100
-                chg_w = ((curr - prev_w) / prev_w) * 100
-                disp_fmt = "%"
+        # TNX Logic Fix
+        if key == 'US10Y':
+            display_price = curr / 10.0 # 42.5 -> 4.25%
+            chg_d = (curr - prev) * 10 # 0.5 diff -> 5 bps
+            chg_w = (curr_w - prev_w) * 10 
+            disp_fmt = "bps"
+        else:
+            display_price = curr
+            chg_d = ((curr - prev) / prev) * 100
+            chg_w = ((curr_w - prev_w) / prev_w) * 100
+            disp_fmt = "%"
             
-            data[key] = {
-                'price': display_price, 
-                'change': chg_d, 
-                'change_w': chg_w,
-                'symbol': symbol, 
-                'fmt': disp_fmt, 
-                'valid': True
-            }
-            
-        except Exception as e:
-            data[key] = {'valid': False, 'symbol': symbol, 'error': str(e)}
+        data[key] = {
+            'price': display_price,
+            'change': chg_d,
+            'change_w': chg_w,
+            'symbol': used_symbol,
+            'fmt': disp_fmt,
+            'valid': True
+        }
 
-    # Create Correlation DF (aligned)
-    df_history = pd.DataFrame(history_data)
-    
-    return data, df_history, full_hist
+    return data, pd.DataFrame(history_data), full_hist, None
 
 # --- 5. LOGIC ENGINE ---
 
 def determine_regime(data, timeframe):
     """
     Determines market regime based on valid data and selected timeframe.
+    RETURNS 'DATA ERROR' if critical drivers are missing (Safety Interlock).
     """
+    # 1. Critical Data Check
+    critical_keys = ['HYG', 'VIX', 'US10Y', 'DXY']
+    if any(not data.get(k, {}).get('valid', False) for k in critical_keys):
+        return "DATA ERROR"
+
     def g(k): return get_val(data, k, timeframe)
     
-    # Default safe values if data missing
-    hyg = g('HYG') if data.get('HYG', {}).get('valid') else 0
-    vix = g('VIX') if data.get('VIX', {}).get('valid') else 0
-    oil = g('OIL')
-    cop = g('COPPER')
-    us10y = g('US10Y')
-    dxy = g('DXY')
-    btc = g('BTC')
-    banks = g('BANKS')
+    hyg, vix = g('HYG'), g('VIX')
+    oil, cop = g('OIL'), g('COPPER')
+    us10y, dxy = g('US10Y'), g('DXY')
+    btc, banks = g('BTC'), g('BANKS')
     
-    # Logic Thresholds (tuned for Daily/Weekly)
-    # If Weekly, we might expect larger moves, but for simplicity we keep thresholds 
-    # similar as they represent "Current State".
-    
-    # 1. RISK OFF (Priority)
+    # 2. Logic Thresholds
+    # RISK OFF (Priority)
     if hyg < -0.5 or vix > 5.0: return "RISK OFF"
     
-    # 2. REFLATION
+    # REFLATION
     if (oil > 1.5 or cop > 1.5) and us10y > 3.0 and banks > 0: return "REFLATION"
     
-    # 3. LIQUIDITY
+    # LIQUIDITY
     if dxy < -0.3 and btc > 1.5: return "LIQUIDITY"
     
-    # 4. GOLDILOCKS
+    # GOLDILOCKS
     if vix < 0 and abs(us10y) < 5.0 and hyg > -0.1: return "GOLDILOCKS"
     
     return "NEUTRAL"
@@ -336,6 +361,13 @@ STRATEGIES = {
             "notes": "Directional downside. Selling the 15D put reduces cost and offsets IV crush."
         },
         "longs": "VIX, DXY", "shorts": "SPY, IWM, HYG"
+    },
+    "DATA ERROR": {
+        "desc": "CRITICAL DATA FEED FAILURE",
+        "risk": "0.0%", "bias": "Flat",
+        "index": {"strat": "STAND ASIDE", "dte": "--", "setup": "--", "notes": "Do not trade. Data integrity compromised."},
+        "stock": {"strat": "STAND ASIDE", "dte": "--", "setup": "--", "notes": "Do not trade. Data integrity compromised."},
+        "longs": "--", "shorts": "--"
     }
 }
 
@@ -569,15 +601,36 @@ def plot_correlation_heatmap(history_df, timeframe):
 def main():
     # --- LOAD DATA ---
     with st.spinner("Connecting to MacroNexus Core (Batched)..."):
-        market_data, history_df, full_hist = fetch_market_data()
+        # 1. Fetch Data
+        market_data, history_df, full_hist, error_msg = fetch_market_data()
+        
+        # 2. Handle Errors (Side effect moved to Main)
+        if error_msg:
+            st.error(error_msg)
         
     # --- TOP METRICS BAR ---
+    # Metric logic moved inside main to access timeframe state if needed, 
+    # but currently we need to render metrics *before* controls usually.
+    # To fix the "Metrics ignore timeframe" issue, we need to know the timeframe first.
+    # So we move Controls UP or use default. 
+    # Current design: Controls are below Metrics. 
+    # Fix: We will render controls first in code order but place them differently, 
+    # OR simpler: Metrics use the default 'Daily' until changed?
+    # Better: Put Controls in Sidebar or just accept that Top Bar is "Live Daily Dashboard".
+    # Decision: Keep Top Bar as "Live Daily" (Standard practice) to avoid confusion.
+    
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    def metric_tile(col, label, key, invert=False):
+    def metric_tile(col, label, key):
         d = market_data.get(key, {})
-        val = d.get('price', 0); chg = d.get('change', 0); fmt = d.get('fmt', "%")
+        val = d.get('price', 0); chg = d.get('change', 0); 
+        valid = d.get('valid', False)
+        
+        if not valid:
+            col.markdown(f"""<div class="metric-card" style="border-left: 3px solid #374151;"><div class="metric-label">{label}</div><div class="metric-value">--</div></div>""", unsafe_allow_html=True)
+            return
+
         is_up = chg > 0
-        if invert: color = "#F43F5E" if is_up else "#10B981" 
+        if key in ['US10Y', 'DXY', 'VIX']: color = "#F43F5E" if is_up else "#10B981" # Red if Drivers Up
         else: color = "#10B981" if is_up else "#F43F5E" 
         
         # Display logic for TNX
@@ -590,8 +643,8 @@ def main():
             
         col.markdown(f"""<div class="metric-card" style="border-left: 3px solid {color};"><div class="metric-label">{label}</div><div class="metric-value">{val_str}<span class="metric-delta" style="color: {color};">{fmt_chg}</span></div></div>""", unsafe_allow_html=True)
 
-    metric_tile(c1, "Credit (HYG)", "HYG"); metric_tile(c2, "Volatility (VIX)", "VIX", invert=True); metric_tile(c3, "10Y Yield", "US10Y", invert=True)
-    metric_tile(c4, "Dollar (DXY)", "DXY", invert=True); metric_tile(c5, "Oil", "OIL"); metric_tile(c6, "Bitcoin", "BTC")
+    metric_tile(c1, "Credit (HYG)", "HYG"); metric_tile(c2, "Volatility (VIX)", "VIX"); metric_tile(c3, "10Y Yield", "US10Y")
+    metric_tile(c4, "Dollar (DXY)", "DXY"); metric_tile(c5, "Oil", "OIL"); metric_tile(c6, "Bitcoin", "BTC")
 
     # --- MAIN CONTROLS ---
     # Consolidated Control Container
@@ -610,11 +663,22 @@ def main():
             active_regime = st.selectbox("Force Regime", list(STRATEGIES.keys()), label_visibility="collapsed") if override else auto_regime
             
         with ctrl3:
-            r_colors = {"GOLDILOCKS": "#10B981", "LIQUIDITY": "#A855F7", "REFLATION": "#F59E0B", "NEUTRAL": "#6B7280", "RISK OFF": "#EF4444"}
-            rc = r_colors.get(active_regime, "#6B7280")
-            st.markdown(f"""<div style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 15px;"><div style="text-align: right;"><div style="font-size: 10px; color: #8B9BB4; letter-spacing: 1px;">SYSTEM STATUS</div><div style="font-size: 14px; font-weight: bold; color: {rc};">ACTIVE</div></div><div class="regime-badge" style="background: {rc}22; color: {rc}; border: 1px solid {rc};">{active_regime}</div></div>""", unsafe_allow_html=True)
+            # Handle DATA ERROR Regime color
+            if active_regime == "DATA ERROR":
+                rc = "#EF4444"
+                status_text = "ERROR"
+            else:
+                r_colors = {"GOLDILOCKS": "#10B981", "LIQUIDITY": "#A855F7", "REFLATION": "#F59E0B", "NEUTRAL": "#6B7280", "RISK OFF": "#EF4444"}
+                rc = r_colors.get(active_regime, "#6B7280")
+                status_text = "ACTIVE"
+                
+            st.markdown(f"""<div style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 15px;"><div style="text-align: right;"><div style="font-size: 10px; color: #8B9BB4; letter-spacing: 1px;">SYSTEM STATUS</div><div style="font-size: 14px; font-weight: bold; color: {rc};">{status_text}</div></div><div class="regime-badge" style="background: {rc}22; color: {rc}; border: 1px solid {rc};">{active_regime}</div></div>""", unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
+
+    # --- DATA ERROR BANNER ---
+    if auto_regime == "DATA ERROR" and not override:
+        st.error("⚠️ CRITICAL DATA FAILURE: One or more key drivers (HYG, VIX, US10Y, DXY) failed to load. The system cannot determine a safe regime. Trading is NOT recommended.")
 
     # --- TABS ---
     tab_mission, tab_workflow, tab_pulse, tab_macro, tab_playbook = st.tabs([
@@ -642,7 +706,9 @@ def main():
         # --- REACTOR LOGIC ---
         reactor_output = {}
         
-        if asset_mode == "STOCKS":
+        if active_regime == "DATA ERROR":
+             reactor_output = strat_data["index"] # Fallback to error message
+        elif asset_mode == "STOCKS":
             reactor_output = strat_data["stock"]
         else:
             if active_regime == "RISK OFF":
