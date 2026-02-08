@@ -12,7 +12,7 @@ import yfinance as yf
 # ----------------------------
 # 0) BASIC CONFIG / CONSTANTS
 # ----------------------------
-APP_VERSION = "MacroNexus Pro v2.0 (Internals Upgrade)"
+APP_VERSION = "MacroNexus Pro v2.1 (Hardened Build)"
 
 # Data universe
 TICKERS: Dict[str, str] = {
@@ -864,9 +864,12 @@ def main() -> None:
         c2.write(f"**Valid Keys:** {len(health.valid_keys)}/{len(TICKERS)}")
         c3.write(f"**Proxies:** {len(health.proxy_used)}")
         if health.errors:
-            st.warning(f"Errors: {health.errors}")
+            # Use json to format nicely instead of raw dict string
+            st.warning("Data Errors Detected:")
+            st.json(health.errors)
         if health.proxy_used:
-            st.info(f"Proxies: {health.proxy_used}")
+            st.info("Proxies in Use:")
+            st.json(health.proxy_used)
 
     # -- Top Metrics Bar --
     c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -1065,13 +1068,60 @@ def main() -> None:
         pb_tabs = st.tabs(["🔴 A14 (Crash)", "🟣 TIMEZONE (RUT)", "🔵 TIMEEDGE (SPX)", "🌊 FLYAGONAL (Drift)"])
         
         with pb_tabs[0]:
-            st.markdown("""### A14: The "Anti-Fragile" Hedge\n**Concept:** Financing downside protection using OTM puts.\n- **Structure:** Put Broken Wing Butterfly\n- **Entry:** Friday Morning, 14 DTE.""")
+            st.markdown("""
+### A14: The "Anti-Fragile" Hedge
+**Concept:** Financing downside protection using OTM puts, creating a "free" crash catcher if filled for a credit.
+**1. Setup & Structure (Put Broken Wing Butterfly)**
+- **Long:** 1x ATM Put (e.g., 4000)
+- **Short:** 2x OTM Puts (e.g., 3960 / -40 pts)
+- **Long:** 1x OTM Put (e.g., 3900 / -60 pts) *(skip strikes)*
+**2. Entry Protocol**
+- **Time:** Friday morning (~1 hour after open)
+- **DTE:** 14 days
+- **Target:** net credit or very small debit
+**3. Management**
+- **Upside:** do nothing; keep credit
+- **Downside:** tent expands into crash
+- **Exit:** hard stop at **7 DTE**
+""")
         with pb_tabs[1]:
-            st.markdown("""### TimeZone: High Prob RUT Income\n**Concept:** Harvest theta on Russell.\n- **Structure:** Put Credit Spread + Put Calendar\n- **Entry:** Thursday 3pm, 15 DTE.""")
+            st.markdown("""
+### TimeZone: High Prob RUT Income
+**Concept:** Harvest theta on Russell using a hedged structure.
+**1. Structure**
+- **Leg A:** Put credit spread (sell ~14D / buy ~5D)
+- **Leg B:** Put calendar (sell 15 DTE / buy 45 DTE same strike)
+**2. Entry**
+- **Time:** Thursday ~3:00 PM ET
+- **DTE:** 15 DTE (front month)
+**3. Management**
+- Profit target: 5–7% of margin
+- Max loss: 5% of margin
+- Hard stop: exit at **7 DTE**
+""")
         with pb_tabs[2]:
-            st.markdown("""### TimeEdge: Pure Theta Decay\n**Concept:** Exploit decay differential.\n- **Structure:** Double Calendar (Sell 15d / Buy 43d)\n- **Target:** 10% Profit.""")
+            st.markdown("""
+### TimeEdge: Pure Theta Decay
+**Concept:** Exploit decay differential between front and back months in SPX.
+**Structure**
+- Double calendar: sell 15 DTE / buy ~43 DTE
+- Strikes: ATM or slightly OTM
+**Rules**
+- Profit target: 10%
+- Stop loss: 10%
+- Exit: hard stop at 1 DTE (usually earlier)
+""")
         with pb_tabs[3]:
-            st.markdown("""### Flyagonal: The Drift Catcher\n**Concept:** Capture melt-up drift higher.\n- **Structure:** Call BWB (Upside) + Put Diagonal (Downside)\n- **Win:** 4% Flash Win Target.""")
+            st.markdown("""
+### Flyagonal: The Drift Catcher
+**Concept:** Capture melt-up drift higher.
+**Structure**
+- Upside: call broken-wing butterfly (+10 / -50 / +60 width)
+- Downside: put diagonal (sell front OTM / buy back OTM)
+**Rules**
+- Flash win: if profit > 4% in 1–2 days, close immediately
+- Scratch: if no movement by 3 DTE, close
+""")
 
 if __name__ == "__main__":
     main()
