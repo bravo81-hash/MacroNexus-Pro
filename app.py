@@ -12,7 +12,7 @@ import yfinance as yf
 # ----------------------------
 # 0) BASIC CONFIG / CONSTANTS
 # ----------------------------
-APP_VERSION = "MacroNexus Pro (Visual Ops)"
+APP_VERSION = "MacroNexus Pro (Visual Ops v2.0)"
 
 # Data universe
 TICKERS: Dict[str, str] = {
@@ -226,7 +226,6 @@ def _weekly_wtd_reference(series: pd.Series) -> Tuple[float, float]:
     weekly = series.resample("W-FRI").last().dropna()
     if len(weekly) >= 2:
         last_date = series.index[-1]
-        # Check if last date matches the weekly bucket end (Friday)
         is_friday_close = (getattr(last_date, "weekday", lambda: -1)() == 4) and (weekly.index[-1].date() == last_date.date())
         if is_friday_close:
             prev_friday = float(weekly.iloc[-2])
@@ -417,8 +416,66 @@ def determine_regime(data: Dict[str, dict], timeframe: str, strict_data: bool) -
     return "NEUTRAL", confidence, reasons
 
 # ----------------------------
-# 8) VISUALS
+# 8) VISUALS & CALCULATIONS
 # ----------------------------
+def calculate_sector_breadth(full_hist: Dict[str, pd.Series]) -> float:
+    """Calculates % of Sectors trading above 20 SMA."""
+    sector_keys = ["TECH", "SEMIS", "BANKS", "ENERGY", "HOME", "UTIL", "STAPLES", "DISC", "IND", "HEALTH", "MAT", "COMM", "RE"]
+    count_up = 0
+    total_valid = 0
+    
+    for k in sector_keys:
+        if k in full_hist:
+            s = full_hist[k]
+            if len(s) > 20:
+                curr = s.iloc[-1]
+                sma20 = s.rolling(20).mean().iloc[-1]
+                if curr > sma20:
+                    count_up += 1
+                total_valid += 1
+                
+    if total_valid == 0: return 0.0
+    return (count_up / total_valid) * 100
+
+def calculate_vix_percentile(full_hist: Dict[str, pd.Series]) -> float:
+    """Calculates current VIX percentile over last 252 days."""
+    if "VIX" in full_hist:
+        s = full_hist["VIX"]
+        if len(s) > 252: s = s.iloc[-252:]
+        curr = s.iloc[-1]
+        return (s < curr).mean() * 100
+    return 50.0
+
+def plot_drawdown_radar(full_hist: Dict[str, pd.Series]) -> go.Figure:
+    """Bar chart showing distance from 52-Week High."""
+    assets = ["SPY", "QQQ", "IWM", "BTC", "TLT", "GOLD"]
+    dd_vals = []
+    
+    for a in assets:
+        if a in full_hist:
+            s = full_hist[a]
+            if len(s) > 252: s = s.iloc[-252:]
+            high = s.max()
+            curr = s.iloc[-1]
+            dd = ((curr / high) - 1) * 100
+            dd_vals.append({"Asset": a, "Drawdown": dd})
+            
+    df = pd.DataFrame(dd_vals)
+    if df.empty: return go.Figure()
+    
+    fig = px.bar(df, x="Asset", y="Drawdown", text_auto='.1f', color="Drawdown",
+                 color_continuous_scale=[(0, "#ef4444"), (1, "#3b82f6")]) # Red deep, Blue shallow
+    
+    fig.update_layout(
+        title="Drawdown from 52-Week High (%)",
+        yaxis_title="% Off High",
+        xaxis_title="",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#ccc"), showlegend=False,
+        margin=dict(l=20, r=20, t=40, b=20), height=300
+    )
+    return fig
+
 def plot_nexus_graph_dots(data: Dict[str, dict], timeframe: str) -> go.Figure:
     nodes = {
         "US10Y": {"pos": (0, 0), "label": "Rates (^TNX)"},
@@ -471,61 +528,28 @@ def plot_nexus_graph_dots(data: Dict[str, dict], timeframe: str) -> go.Figure:
     return fig
 
 def plot_normalized_history(full_hist, assets, window_days=60):
-    """
-    Plots normalized performance of multiple assets starting at 0%
-    """
     df_merged = pd.DataFrame()
     for asset in assets:
         if asset in full_hist:
             s = full_hist[asset]
-            if len(s) > window_days:
-                s = s.iloc[-window_days:]
-            # Rebase to 0
+            if len(s) > window_days: s = s.iloc[-window_days:]
             start_val = s.iloc[0]
-            if start_val > 0:
-                df_merged[asset] = ((s / start_val) - 1) * 100
+            if start_val > 0: df_merged[asset] = ((s / start_val) - 1) * 100
                 
     if df_merged.empty: return go.Figure()
-    
     fig = px.line(df_merged, x=df_merged.index, y=df_merged.columns)
-    fig.update_layout(
-        title=f"Normalized Performance (Last {window_days} Days)",
-        xaxis_title="", yaxis_title="% Change",
-        legend_title="",
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#ccc"), hovermode="x unified",
-        margin=dict(l=10, r=10, t=40, b=10), height=400
-    )
+    fig.update_layout(title=f"Normalized Performance (Last {window_days} Days)", xaxis_title="", yaxis_title="% Change", legend_title="", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#ccc"), hovermode="x unified", margin=dict(l=10, r=10, t=40, b=10), height=400)
     return fig
 
 def plot_rolling_correlation(full_hist, asset1, asset2, window=20):
-    """
-    Plots rolling 20-day correlation between two assets.
-    """
     if asset1 not in full_hist or asset2 not in full_hist: return go.Figure()
-    
-    s1 = full_hist[asset1]
-    s2 = full_hist[asset2]
-    
-    # Align dates
+    s1 = full_hist[asset1]; s2 = full_hist[asset2]
     df = pd.DataFrame({asset1: s1, asset2: s2}).dropna()
     rolling_corr = df[asset1].rolling(window=window).corr(df[asset2]).dropna()
-    
-    # Slice last year max
-    if len(rolling_corr) > 252:
-        rolling_corr = rolling_corr.iloc[-252:]
-        
+    if len(rolling_corr) > 252: rolling_corr = rolling_corr.iloc[-252:]
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=rolling_corr.index, y=rolling_corr.values, mode='lines', fill='tozeroy', name='Correlation', line=dict(color='#3b82f6')))
-    
-    fig.update_layout(
-        title=f"{asset1} vs {asset2} ({window}D Rolling Correlation)",
-        yaxis=dict(range=[-1.1, 1.1], title="Correlation"),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#ccc"),
-        margin=dict(l=10, r=10, t=40, b=10), height=350,
-        shapes=[dict(type="line", xref="paper", x0=0, x1=1, y0=0, y1=0, line=dict(color="white", width=1, dash="dot"))]
-    )
+    fig.update_layout(title=f"{asset1} vs {asset2} ({window}D Rolling Correlation)", yaxis=dict(range=[-1.1, 1.1], title="Correlation"), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#ccc"), margin=dict(l=10, r=10, t=40, b=10), height=350, shapes=[dict(type="line", xref="paper", x0=0, x1=1, y0=0, y1=0, line=dict(color="white", width=1, dash="dot"))])
     return fig
 
 def _sankey_from_values(title: str, values: Dict[str, float], color_rgba: str) -> go.Figure:
@@ -606,11 +630,15 @@ def main() -> None:
     with st.spinner("Connecting to MacroNexus Core..."):
         market_data, history_df, full_hist, health = fetch_market_data()
     
-    if health.errors.get("__download__"): st.error(f"Download Error: {health.errors['__download__']}")
+    # Calculate derived visual metrics
+    sector_breadth = calculate_sector_breadth(full_hist)
+    vix_percentile = calculate_vix_percentile(full_hist)
     
-    cols_h = st.columns(4)
-    cols_h[0].markdown(f"<span class='badge-blue'>Fetched: {health.fetched_at_utc[11:19]}</span>", unsafe_allow_html=True)
-    cols_h[1].markdown(f"<span class='badge-blue'>Valid: {len(health.valid_keys)}/{len(TICKERS)}</span>", unsafe_allow_html=True)
+    # Data Health Expander (Cleaned Up)
+    with st.expander(f"Data Status: {len(health.valid_keys)}/{len(TICKERS)} Valid | {len(health.proxy_used)} Proxies"):
+        if health.errors.get("__download__"): st.error(f"Download Error: {health.errors['__download__']}")
+        st.write(f"Fetched: {health.fetched_at_utc[11:19]}")
+        if health.proxy_used: st.warning(f"Proxies: {health.proxy_used}")
     
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     def metric_tile(col, label, key):
@@ -651,19 +679,20 @@ def main() -> None:
         with st.expander("🎛️ SPX Income Reactor Telemetry", expanded=True):
             tc1, tc2, tc3, tc4 = st.columns(4)
             asset_mode = tc1.radio("Asset Class", ["INDEX", "STOCKS"], horizontal=True)
+            # Gauges for Context
+            g_col1, g_col2 = st.columns(2)
+            with g_col1:
+                st.metric("Sector Breadth (>SMA20)", f"{sector_breadth:.1f}%", delta_color="normal")
+            with g_col2:
+                st.metric("VIX Percentile (1Y)", f"{vix_percentile:.1f}%", delta_color="inverse")
+            
+            # Manual inputs
             iv_rank = tc2.slider("IV Rank", 0, 100, 45)
             skew_rank = tc3.slider("Skew", 0, 100, 50)
             adx_val = tc4.slider("ADX", 0, 60, 20)
-        
-        # Reactor Gauge Visuals
-        g1, g2, g3 = st.columns(3)
-        g1.plotly_chart(go.Figure(go.Indicator(mode="gauge+number", value=iv_rank, title={'text': "IV Rank"}, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#3b82f6"}})).update_layout(height=150, margin=dict(l=20,r=20,t=30,b=20)), use_container_width=True)
-        g2.plotly_chart(go.Figure(go.Indicator(mode="gauge+number", value=skew_rank, title={'text': "Skew"}, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#a855f7"}})).update_layout(height=150, margin=dict(l=20,r=20,t=30,b=20)), use_container_width=True)
-        g3.plotly_chart(go.Figure(go.Indicator(mode="gauge+number", value=adx_val, title={'text': "Trend Strength"}, gauge={'axis': {'range': [0, 60]}, 'bar': {'color': "#f59e0b"}})).update_layout(height=150, margin=dict(l=20,r=20,t=30,b=20)), use_container_width=True)
 
         st.divider()
         strat_data = STRATEGIES.get(active_regime, STRATEGIES["NEUTRAL"])
-        # Logic simplified for display
         output = strat_data["index"] if asset_mode == "INDEX" else strat_data["stock"]
         
         col_L, col_R = st.columns([1, 2])
@@ -676,8 +705,12 @@ def main() -> None:
         with c_trend1:
             st.plotly_chart(plot_normalized_history(full_hist, ["SPY", "TLT", "GLD", "BTC-USD", "DX-Y.NYB"], 90), use_container_width=True)
         with c_trend2:
-            st.plotly_chart(plot_rolling_correlation(full_hist, "SPY", "TLT", 20), use_container_width=True)
-            st.plotly_chart(plot_rolling_correlation(full_hist, "SPY", "DX-Y.NYB", 20), use_container_width=True)
+            st.markdown("##### 🔍 Correlation Radar & Drawdowns")
+            t2_a, t2_b = st.tabs(["Correlations", "Drawdowns"])
+            with t2_a:
+                st.plotly_chart(plot_rolling_correlation(full_hist, "SPY", "TLT", 20), use_container_width=True)
+            with t2_b:
+                st.plotly_chart(plot_drawdown_radar(full_hist), use_container_width=True)
 
     with tab_workflow:
         w1, w2, w3, w4, w5 = st.columns(5)
@@ -701,7 +734,62 @@ def main() -> None:
         with c2: st.markdown("<div class='context-box'><b>The Plumbing</b><br>Network graph of macro linkages.<br>Green = Rising, Red = Falling.</div>", unsafe_allow_html=True)
 
     with tab_playbook:
-        st.write("Detailed strategies here...") # Kept brief for length, can expand
+        # Use Tabs for Playbook to save scrolling
+        pb1, pb2, pb3, pb4 = st.tabs(["A14 (Crash)", "Flyagonal (Drift)", "TimeEdge (Theta)", "TimeZone (RUT)"])
+        
+        with pb1:
+            st.markdown("### A14: The 'Anti-Fragile' Hedge")
+            st.info("**Concept:** Financing downside protection using OTM puts.")
+            st.markdown("""
+            **1. Setup & Structure (Put Broken Wing Butterfly)**
+            * **Long:** 1x ATM Put (e.g., 4000)
+            * **Short:** 2x OTM Puts (e.g., 3960 / -40 pts)
+            * **Long:** 1x OTM Put (e.g., 3900 / -60 pts) *(skip strikes)*
+            
+            **2. Entry Protocol**
+            * **Time:** Friday Morning (~1 hour after open).
+            * **DTE:** 14 Days.
+            * **Management:** Hard stop at **7 DTE**.
+            """)
+            
+        with pb2:
+            st.markdown("### Flyagonal: The Drift Catcher")
+            st.info("**Concept:** Captures the 'melt-up' or slow drift higher.")
+            st.markdown("""
+            **1. Structure**
+            * **Upside:** Call Broken Wing Butterfly (+10 / -50 / +60 width).
+            * **Downside:** Put Diagonal (Sell Front OTM / Buy Back OTM).
+            
+            **2. Entry Protocol**
+            * **Time:** Tuesday or Friday. 7-10 Days DTE.
+            * **Management:** Flash Win >4% in 1-2 days close.
+            """)
+            
+        with pb3:
+            st.markdown("### TimeEdge: Pure Theta Decay")
+            st.info("**Concept:** Exploiting decay differential (Front vs Back).")
+            st.markdown("""
+            **1. Structure**
+            * **Double Calendar:** Sell 15 DTE / Buy 43 DTE (approx).
+            * **Strikes:** ATM or slightly OTM.
+            
+            **2. Rules**
+            * **Target:** 10%. **Stop:** 10%.
+            * **Exit:** 1 DTE Hard Stop.
+            """)
+            
+        with pb4:
+            st.markdown("### TimeZone: High Prob RUT Income")
+            st.info("**Concept:** Harvest theta on the Russell 2000 (RUT).")
+            st.markdown("""
+            **1. Structure (Combined)**
+            * **Leg A (Income):** Put Credit Spread. Sell ~14 Delta / Buy ~5 Delta.
+            * **Leg B (Hedge):** Put Calendar. Sell Front Month (15 DTE) / Buy Back Month (45 DTE).
+            
+            **2. Management**
+            * **Profit Target:** 5-7%. **Max Loss:** 5%.
+            * **Exit:** 7 DTE Hard Stop.
+            """)
 
 if __name__ == "__main__":
     main()
