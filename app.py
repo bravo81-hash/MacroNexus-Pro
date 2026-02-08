@@ -60,15 +60,12 @@ st.markdown("""
     .strat-data { font-size: 15px; color: #E5E7EB; font-family: 'Inter', sans-serif; font-weight: 500; line-height: 1.4; }
     
     /* Control Panel */
-    .control-bar {
+    .control-container {
         background-color: #161920;
         border: 1px solid #2A2E39;
         border-radius: 10px;
         padding: 15px 25px;
         margin-bottom: 25px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
     }
     
     /* Regime Badge */
@@ -126,81 +123,134 @@ TICKERS = {
 }
 FALLBACKS = {'DXY': 'UUP', 'VIX': 'VIXY', 'RUT': 'IWM'}
 
-# --- 4. DATA ENGINE ---
+# --- 4. DATA ENGINE (BATCH OPTIMIZED) ---
 @st.cache_data(ttl=300)
 def fetch_market_data():
-    data = {}
-    history_data = {} 
+    """
+    Fetches data using batched download for performance and stability.
+    Returns:
+        data: Dict of current metrics
+        history_df: DataFrame of close prices for correlation
+        full_hist: Dict of Series for RRG calculation
+    """
+    symbols = list(TICKERS.values())
     
-    for key, symbol in TICKERS.items():
+    # 1. Batch Download (Threaded)
+    try:
+        # Download 1 year to ensure enough data for weekly SMAs
+        df_batch = yf.download(symbols, period="1y", group_by='ticker', threads=True, progress=False)
+    except Exception as e:
+        st.error(f"Critical Data Error: {e}")
+        return {}, pd.DataFrame(), {}
+
+    data = {}
+    history_data = {} # For Correlation
+    full_hist = {}    # For RRG calculations
+    
+    # Map back from Symbol to Key (e.g. ^TNX -> US10Y)
+    symbol_to_key = {v: k for k, v in TICKERS.items()}
+    
+    for symbol, key in symbol_to_key.items():
         try:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="6mo")
-            
-            if hist.empty and key in FALLBACKS:
-                symbol = FALLBACKS[key]
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="6mo")
-            
-            hist_clean = hist['Close'].dropna()
-            
-            if not hist_clean.empty and len(hist_clean) >= 50:
-                history_data[key] = hist_clean
-                
-                curr = hist_clean.iloc[-1]
-                prev = hist_clean.iloc[-2]
-                
-                # Calculations for RRG (Trend vs Momentum)
-                # Trend = Price vs 20 SMA
-                sma20 = hist_clean.rolling(window=20).mean().iloc[-1]
-                trend_score = ((curr / sma20) - 1) * 100
-                
-                # Momentum = Price vs 5 SMA
-                sma5 = hist_clean.rolling(window=5).mean().iloc[-1]
-                mom_score = ((curr / sma5) - 1) * 100
-                
-                # Standard Changes
-                prev_w = hist_clean.iloc[-6] 
-                
-                if key == 'US10Y':
-                    chg_d = (curr - prev) * 10 
-                    chg_w = (curr - prev_w) * 10
-                    disp_fmt = "bps"
-                else:
-                    chg_d = ((curr - prev) / prev) * 100
-                    chg_w = ((curr - prev_w) / prev_w) * 100
-                    disp_fmt = "%"
-                
-                data[key] = {
-                    'price': curr, 'change': chg_d, 
-                    'change_w': chg_w,
-                    'trend_score': trend_score, 'mom_score': mom_score,
-                    'symbol': symbol, 'fmt': disp_fmt, 'valid': True
-                }
+            # Handle Multi-Level Index from Batch Download
+            if len(symbols) > 1:
+                if symbol not in df_batch.columns.levels[0]:
+                    # Try fallback
+                    if key in FALLBACKS:
+                        # We won't re-download in loop to avoid blocking, just skip or mark invalid
+                        data[key] = {'valid': False, 'symbol': symbol}
+                        continue
+                    else:
+                        data[key] = {'valid': False, 'symbol': symbol}
+                        continue
+                hist = df_batch[symbol]['Close'].dropna()
             else:
-                data[key] = {'price': 0, 'change': 0, 'change_w': 0, 'trend_score':0, 'mom_score':0, 'symbol': symbol, 'fmt': "%", 'valid': False}
-        except:
-            data[key] = {'price': 0, 'change': 0, 'change_w': 0, 'trend_score':0, 'mom_score':0, 'symbol': symbol, 'fmt': "%", 'valid': False}
+                hist = df_batch['Close'].dropna()
+
+            if len(hist) < 50:
+                data[key] = {'valid': False, 'symbol': symbol}
+                continue
+
+            # Store for downstream
+            history_data[key] = hist
+            full_hist[key] = hist
             
+            # --- METRICS ---
+            curr = hist.iloc[-1]
+            prev = hist.iloc[-2]
+            prev_w = hist.iloc[-6] # ~1 week ago
+            
+            # 2. TNX Normalization Logic (Critical Fix)
+            if key == 'US10Y':
+                # Yahoo returns 42.50 for 4.25%. 
+                # We store normalized price for Display, but use Raw for changes logic if needed.
+                # Actually, standard is to display 4.25.
+                display_price = curr / 10.0 
+                
+                # Change in BPS: (42.50 - 42.00) * 10 = 5.0 bps
+                chg_d = (curr - prev) * 10
+                chg_w = (curr - prev_w) * 10
+                disp_fmt = "bps"
+            else:
+                display_price = curr
+                chg_d = ((curr - prev) / prev) * 100
+                chg_w = ((curr - prev_w) / prev_w) * 100
+                disp_fmt = "%"
+            
+            data[key] = {
+                'price': display_price, 
+                'change': chg_d, 
+                'change_w': chg_w,
+                'symbol': symbol, 
+                'fmt': disp_fmt, 
+                'valid': True
+            }
+            
+        except Exception as e:
+            data[key] = {'valid': False, 'symbol': symbol, 'error': str(e)}
+
+    # Create Correlation DF (aligned)
     df_history = pd.DataFrame(history_data)
-    return data, df_history
+    
+    return data, df_history, full_hist
 
 # --- 5. LOGIC ENGINE ---
-def determine_regime(data):
-    def g(k): return data.get(k, {}).get('change', 0)
+
+def determine_regime(data, timeframe):
+    """
+    Determines market regime based on valid data and selected timeframe.
+    """
+    def g(k): return get_val(data, k, timeframe)
     
-    hyg, vix = g('HYG'), g('VIX')
-    oil, cop = g('OIL'), g('COPPER')
-    us10y, dxy = g('US10Y'), g('DXY')
-    btc, banks = g('BTC'), g('BANKS')
+    # Default safe values if data missing
+    hyg = g('HYG') if data.get('HYG', {}).get('valid') else 0
+    vix = g('VIX') if data.get('VIX', {}).get('valid') else 0
+    oil = g('OIL')
+    cop = g('COPPER')
+    us10y = g('US10Y')
+    dxy = g('DXY')
+    btc = g('BTC')
+    banks = g('BANKS')
     
+    # Logic Thresholds (tuned for Daily/Weekly)
+    # If Weekly, we might expect larger moves, but for simplicity we keep thresholds 
+    # similar as they represent "Current State".
+    
+    # 1. RISK OFF (Priority)
     if hyg < -0.5 or vix > 5.0: return "RISK OFF"
+    
+    # 2. REFLATION
     if (oil > 1.5 or cop > 1.5) and us10y > 3.0 and banks > 0: return "REFLATION"
+    
+    # 3. LIQUIDITY
     if dxy < -0.3 and btc > 1.5: return "LIQUIDITY"
+    
+    # 4. GOLDILOCKS
     if vix < 0 and abs(us10y) < 5.0 and hyg > -0.1: return "GOLDILOCKS"
+    
     return "NEUTRAL"
 
-# --- 6. STRATEGY DATABASE (Expanded) ---
+# --- 6. STRATEGY DATABASE ---
 STRATEGIES = {
     "GOLDILOCKS": {
         "desc": "Low Vol + Steady Trend. Market climbing wall of worry.",
@@ -291,7 +341,11 @@ STRATEGIES = {
 
 # --- 7. DYNAMIC HELPER ---
 def get_val(data, key, timeframe):
+    """Safely retrieve value based on timeframe selection"""
     d = data.get(key, {})
+    if not d.get('valid', False):
+        return 0.0
+        
     if timeframe == 'Tactical (Daily)':
         return d.get('change', 0)
     else: 
@@ -301,10 +355,10 @@ def get_val(data, key, timeframe):
 
 def plot_nexus_graph_dots(data, timeframe):
     """
-    Creates the 'Dots' Plotly Network Graph requested in original specs.
-    Replaces Graphviz with Plotly for specific aesthetic.
+    Creates the 'Dots' Plotly Network Graph.
+    Uses get_val to enforce timeframe consistency.
+    Removes HTML from scatter text to prevent raw tag display.
     """
-    # 1. Define Nodes & Positions (The "Map")
     nodes = {
         'US10Y': {'pos': (0, 0), 'label': 'Rates (^TNX)'}, 
         'DXY': {'pos': (0.8, 0.8), 'label': 'Dollar (DXY)'},
@@ -323,7 +377,6 @@ def plot_nexus_graph_dots(data, timeframe):
         'VIX': {'pos': (0, 1.5), 'label': 'Vol (^VIX)'}
     }
     
-    # 2. Define Edges (The "Plumbing")
     edges = [
         ('US10Y','QQQ'), ('US10Y','GOLD'), ('US10Y','HOME'), 
         ('DXY','GOLD'), ('DXY','OIL'), 
@@ -332,29 +385,23 @@ def plot_nexus_graph_dots(data, timeframe):
         ('COPPER','US10Y'), ('OIL','ENERGY'), ('VIX','SPY')
     ]
     
-    # 3. Build Plotly Data
     edge_x, edge_y = [], []
     for u, v in edges:
         if u in nodes and v in nodes:
-            x0, y0 = nodes[u]['pos']
-            x1, y1 = nodes[v]['pos']
-            edge_x.extend([x0, x1, None])
-            edge_y.extend([y0, y1, None])
+            x0, y0 = nodes[u]['pos']; x1, y1 = nodes[v]['pos']
+            edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
 
-    node_x, node_y, node_text, node_color, node_size = [], [], [], [], []
+    node_x, node_y, node_text, node_color, node_size, hover_text = [], [], [], [], [], []
+    
     for key, info in nodes.items():
         x, y = info['pos']
         node_x.append(x); node_y.append(y)
         
-        # Get Value
         val = get_val(data, key, timeframe)
         
         # Color Logic
-        col = '#22c55e' if val > 0 else '#ef4444' # Green Up, Red Down
-        if val == 0: col = '#6b7280' # Grey
-        
-        # Invert for Drivers (Rates, DXY, VIX up is usually 'Bad' or Red contextually, 
-        # but to keep simple visual consistency with price change, we keep Green = Price Up)
+        col = '#22c55e' if val > 0 else '#ef4444' 
+        if val == 0: col = '#6b7280'
         
         node_color.append(col)
         node_size.append(45 if key in ['US10Y', 'DXY', 'HYG'] else 35)
@@ -362,32 +409,27 @@ def plot_nexus_graph_dots(data, timeframe):
         fmt_val = f"{val:+.2f}%"
         if key == 'US10Y': fmt_val = f"{val:+.1f} bps"
             
-        node_text.append(f"<b>{info['label']}</b><br>Chg: {fmt_val}")
+        # Clean label for Chart (No HTML)
+        label_clean = info['label'].split('(')[0].strip()
+        node_text.append(label_clean)
+        
+        # Rich label for Hover
+        hover_text.append(f"{info['label']}<br>Change: {fmt_val}")
 
-    # 4. Create Figure
     fig = go.Figure()
     
     # Edges
-    fig.add_trace(go.Scatter(
-        x=edge_x, y=edge_y, 
-        mode='lines', 
-        line=dict(width=1, color='#4b5563'), 
-        hoverinfo='none'
-    ))
+    fig.add_trace(go.Scatter(x=edge_x, y=edge_y, mode='lines', line=dict(width=1, color='#4b5563'), hoverinfo='none'))
     
     # Nodes
     fig.add_trace(go.Scatter(
         x=node_x, y=node_y, 
         mode='markers+text', 
-        text=[n.split('<br>')[0] for n in node_text], # Short label for chart
+        text=node_text, 
         textposition="bottom center", 
-        hovertext=node_text, 
+        hovertext=hover_text, 
         hoverinfo="text", 
-        marker=dict(
-            size=node_size, 
-            color=node_color, 
-            line=dict(width=2, color='white')
-        ), 
+        marker=dict(size=node_size, color=node_color, line=dict(width=2, color='white')), 
         textfont=dict(size=11, color='white')
     ))
     
@@ -396,9 +438,7 @@ def plot_nexus_graph_dots(data, timeframe):
         margin=dict(b=0,l=0,r=0,t=0), 
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.5, 2.5]), 
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.0, 2.0]), 
-        paper_bgcolor='rgba(0,0,0,0)', 
-        plot_bgcolor='rgba(0,0,0,0)', 
-        height=500
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=500
     )
     return fig
 
@@ -436,51 +476,91 @@ def plot_sankey_assets(data, timeframe):
     fig.update_layout(title_text=f"Asset Rotation ({'Daily' if timeframe=='Tactical (Daily)' else 'Weekly'})", font=dict(color='white'), paper_bgcolor='rgba(0,0,0,0)', height=350, margin=dict(l=10,r=10,t=40,b=10))
     return fig
 
-def plot_rrg(data, category, view):
+def plot_rrg(full_hist, category, timeframe):
+    """
+    RRG Logic calculated dynamically from Full History.
+    Ensures math matches the Timeframe.
+    """
     items = []
     if category == 'SECTORS': keys = ['TECH','SEMIS','BANKS','ENERGY','HOME','UTIL','STAPLES','DISC','IND','HEALTH','MAT','COMM','RE']
     else: keys = ['SPY','QQQ','IWM','GOLD','BTC','TLT','DXY','HYG','OIL']
     
+    # Define Lookbacks based on Timeframe
+    if timeframe == 'Tactical (Daily)':
+        trend_win = 20 # 20 Days
+        mom_win = 5    # 5 Days
+    else:
+        # Weekly Proxy (approx 5x)
+        trend_win = 100 # ~20 Weeks
+        mom_win = 25    # ~5 Weeks
+    
     for k in keys:
-        d = data.get(k, {})
-        # RRG LOGIC FIX:
-        # X-Axis = Trend (Longer MA comparison)
-        # Y-Axis = Momentum (Shorter MA comparison)
-        # This provides a more accurate "Rotation" view than just price change
-        x = d.get('trend_score', 0) 
-        y = d.get('mom_score', 0)
+        if k not in full_hist: continue
+        
+        series = full_hist[k]
+        if len(series) < trend_win: continue
+        
+        curr = series.iloc[-1]
+        
+        # 1. Trend Score (Price vs Long Term SMA)
+        sma_long = series.rolling(window=trend_win).mean().iloc[-1]
+        trend_score = ((curr / sma_long) - 1) * 100
+        
+        # 2. Momentum Score (Price vs Short Term SMA - Mean Reversion Proxy)
+        # Or better: ROC (Rate of Change)
+        # Using ROC per audit recommendation for better momentum proxy
+        roc = ((curr / series.iloc[-mom_win]) - 1) * 100
+        mom_score = roc
         
         # Quadrant Color Logic
-        if x > 0 and y > 0: c = '#22c55e' # LEADING (Green)
-        elif x < 0 and y > 0: c = '#3b82f6' # IMPROVING (Blue)
-        elif x > 0 and y < 0: c = '#f59e0b' # WEAKENING (Yellow)
+        if trend_score > 0 and mom_score > 0: c = '#22c55e' # LEADING (Green)
+        elif trend_score < 0 and mom_score > 0: c = '#3b82f6' # IMPROVING (Blue)
+        elif trend_score > 0 and mom_score < 0: c = '#f59e0b' # WEAKENING (Yellow)
         else: c = '#ef4444' # LAGGING (Red)
         
-        items.append({'Symbol': k, 'Trend': x, 'Momentum': y, 'Color': c})
+        items.append({'Symbol': k, 'Trend': trend_score, 'Momentum': mom_score, 'Color': c})
         
     df = pd.DataFrame(items)
+    if df.empty: return go.Figure()
+    
     fig = px.scatter(df, x='Trend', y='Momentum', text='Symbol', color='Color', color_discrete_map="identity")
     fig.update_traces(textposition='top center', marker=dict(size=14, line=dict(width=1, color='white')))
     
-    # Quadrant Lines
-    fig.add_hline(y=0, line_dash="dot", line_color="#555")
-    fig.add_vline(x=0, line_dash="dot", line_color="#555")
+    fig.add_hline(y=0, line_dash="dot", line_color="#555"); fig.add_vline(x=0, line_dash="dot", line_color="#555")
     
-    limit = 5 # Fixed scale for better visualization of rotation
+    # Scale Fix
+    limit = max(df['Trend'].abs().max(), df['Momentum'].abs().max()) * 1.1
+    
     fig.update_layout(
-        xaxis=dict(range=[-limit, limit], zeroline=False, showgrid=True, gridcolor='#333', title="Trend (Price vs SMA20)"),
-        yaxis=dict(range=[-limit, limit], zeroline=False, showgrid=True, gridcolor='#333', title="Momentum (Price vs SMA5)"),
+        xaxis=dict(range=[-limit, limit], zeroline=False, showgrid=True, gridcolor='#333', title=f"Trend (vs SMA{trend_win})"),
+        yaxis=dict(range=[-limit, limit], zeroline=False, showgrid=True, gridcolor='#333', title=f"Momentum (ROC {mom_win})"),
         plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
         font=dict(color='#ccc'), showlegend=False, height=450, 
         margin=dict(l=20, r=20, t=20, b=20)
     )
     return fig
 
-def plot_correlation_heatmap(history_df):
+def plot_correlation_heatmap(history_df, timeframe):
+    """
+    Heatmap now respects Timeframe.
+    Daily = Daily % Returns.
+    Weekly = Weekly % Returns (resampled).
+    """
     if history_df.empty: return go.Figure()
-    corr = history_df.pct_change().corr()
+    
+    # 1. Resample if Weekly
+    if timeframe == 'Structural (Weekly)':
+        # Resample to Weekly (Friday)
+        df_calc = history_df.resample('W-FRI').last()
+    else:
+        df_calc = history_df
+        
+    corr = df_calc.pct_change().corr()
+    
     subset = ['US10Y', 'DXY', 'VIX', 'HYG', 'SPY', 'QQQ', 'IWM', 'BTC', 'GOLD', 'OIL']
-    cols = [c for c in subset if c in corr.columns]; corr_subset = corr.loc[cols, cols]
+    cols = [c for c in subset if c in corr.columns]
+    corr_subset = corr.loc[cols, cols]
+    
     fig = px.imshow(corr_subset, text_auto=".2f", aspect="auto", color_continuous_scale="RdBu_r", zmin=-1, zmax=1)
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#ccc'), height=400)
     return fig
@@ -488,8 +568,8 @@ def plot_correlation_heatmap(history_df):
 # --- 9. MAIN APPLICATION ---
 def main():
     # --- LOAD DATA ---
-    with st.spinner("Connecting to MacroNexus Core..."):
-        market_data, history_df = fetch_market_data()
+    with st.spinner("Connecting to MacroNexus Core (Batched)..."):
+        market_data, history_df, full_hist = fetch_market_data()
         
     # --- TOP METRICS BAR ---
     c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -499,27 +579,42 @@ def main():
         is_up = chg > 0
         if invert: color = "#F43F5E" if is_up else "#10B981" 
         else: color = "#10B981" if is_up else "#F43F5E" 
-        fmt_chg = f"{chg:+.1f} bps" if key == 'US10Y' else f"{chg:+.2f}%"
-        col.markdown(f"""<div class="metric-card" style="border-left: 3px solid {color};"><div class="metric-label">{label}</div><div class="metric-value">{val:.2f}<span class="metric-delta" style="color: {color};">{fmt_chg}</span></div></div>""", unsafe_allow_html=True)
+        
+        # Display logic for TNX
+        if key == 'US10Y':
+            fmt_chg = f"{chg:+.1f} bps"
+            val_str = f"{val:.2f}%" 
+        else:
+            fmt_chg = f"{chg:+.2f}%"
+            val_str = f"{val:.2f}"
+            
+        col.markdown(f"""<div class="metric-card" style="border-left: 3px solid {color};"><div class="metric-label">{label}</div><div class="metric-value">{val_str}<span class="metric-delta" style="color: {color};">{fmt_chg}</span></div></div>""", unsafe_allow_html=True)
 
     metric_tile(c1, "Credit (HYG)", "HYG"); metric_tile(c2, "Volatility (VIX)", "VIX", invert=True); metric_tile(c3, "10Y Yield", "US10Y", invert=True)
     metric_tile(c4, "Dollar (DXY)", "DXY", invert=True); metric_tile(c5, "Oil", "OIL"); metric_tile(c6, "Bitcoin", "BTC")
 
     # --- MAIN CONTROLS ---
-    auto_regime = determine_regime(market_data)
-
-    st.markdown('<div class="control-bar">', unsafe_allow_html=True)
-    ctrl1, ctrl2, ctrl3 = st.columns([1, 1, 2])
-    with ctrl1:
-        override = st.checkbox("Manual Override", value=False)
-        active_regime = st.selectbox("Force Regime", list(STRATEGIES.keys()), label_visibility="collapsed") if override else auto_regime
-    with ctrl2:
-        timeframe = st.selectbox("Analytic View", ["Tactical (Daily)", "Structural (Weekly)"], label_visibility="collapsed")
-    with ctrl3:
-        r_colors = {"GOLDILOCKS": "#10B981", "LIQUIDITY": "#A855F7", "REFLATION": "#F59E0B", "NEUTRAL": "#6B7280", "RISK OFF": "#EF4444"}
-        rc = r_colors.get(active_regime, "#6B7280")
-        st.markdown(f"""<div style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 15px;"><div style="text-align: right;"><div style="font-size: 10px; color: #8B9BB4; letter-spacing: 1px;">SYSTEM STATUS</div><div style="font-size: 14px; font-weight: bold; color: {rc};">ACTIVE</div></div><div class="regime-badge" style="background: {rc}22; color: {rc}; border: 1px solid {rc};">{active_regime}</div></div>""", unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    # Consolidated Control Container
+    with st.container():
+        st.markdown('<div class="control-container">', unsafe_allow_html=True)
+        ctrl1, ctrl2, ctrl3 = st.columns([1, 1, 2])
+        
+        with ctrl2:
+            timeframe = st.selectbox("Analytic View", ["Tactical (Daily)", "Structural (Weekly)"], label_visibility="collapsed")
+            
+        # Determine Regime using SELECTED Timeframe
+        auto_regime = determine_regime(market_data, timeframe)
+        
+        with ctrl1:
+            override = st.checkbox("Manual Override", value=False)
+            active_regime = st.selectbox("Force Regime", list(STRATEGIES.keys()), label_visibility="collapsed") if override else auto_regime
+            
+        with ctrl3:
+            r_colors = {"GOLDILOCKS": "#10B981", "LIQUIDITY": "#A855F7", "REFLATION": "#F59E0B", "NEUTRAL": "#6B7280", "RISK OFF": "#EF4444"}
+            rc = r_colors.get(active_regime, "#6B7280")
+            st.markdown(f"""<div style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 15px;"><div style="text-align: right;"><div style="font-size: 10px; color: #8B9BB4; letter-spacing: 1px;">SYSTEM STATUS</div><div style="font-size: 14px; font-weight: bold; color: {rc};">ACTIVE</div></div><div class="regime-badge" style="background: {rc}22; color: {rc}; border: 1px solid {rc};">{active_regime}</div></div>""", unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # --- TABS ---
     tab_mission, tab_workflow, tab_pulse, tab_macro, tab_playbook = st.tabs([
@@ -535,7 +630,7 @@ def main():
         # TELEMETRY
         with st.expander("🎛️ SPX Income Reactor Telemetry (Manual Input)", expanded=True):
             tc1, tc2, tc3, tc4 = st.columns(4)
-            asset_mode = tc1.radio("Asset Class", ["INDEX (SPX/RUT)", "STOCKS"], horizontal=True) # TOGGLE IS HERE
+            asset_mode = tc1.radio("Asset Class", ["INDEX (SPX/RUT)", "STOCKS"], horizontal=True)
             iv_rank = tc2.slider("IV Rank (Percentile)", 0, 100, 45)
             skew_rank = tc3.slider("Skew Rank", 0, 100, 50)
             adx_val = tc4.slider("Trend ADX", 0, 60, 20)
@@ -548,10 +643,8 @@ def main():
         reactor_output = {}
         
         if asset_mode == "STOCKS":
-            # Stock Logic relies purely on Regime
             reactor_output = strat_data["stock"]
         else:
-            # Index Logic uses the Vol/Skew Reactor
             if active_regime == "RISK OFF":
                 reactor_output = STRATEGIES["RISK OFF"]["index"]
             elif iv_rank > 50: 
@@ -741,7 +834,8 @@ Consult the <b>SPX Reactor</b>.
         st.subheader("🔥 Inter-Correlation Matrix")
         col_c1, col_c2 = st.columns([3, 1])
         with col_c1:
-            st.plotly_chart(plot_correlation_heatmap(history_df), use_container_width=True)
+            # Pass timeframe to calculation
+            st.plotly_chart(plot_correlation_heatmap(history_df, timeframe), use_container_width=True)
         with col_c2:
             st.markdown(f"""
 <div class="context-box">
@@ -760,7 +854,8 @@ Consult the <b>SPX Reactor</b>.
         q1, q2 = st.columns(2)
         with q1:
             st.markdown("**SECTORS**")
-            st.plotly_chart(plot_rrg(market_data, 'SECTORS', timeframe), use_container_width=True)
+            # Pass full_hist and timeframe
+            st.plotly_chart(plot_rrg(full_hist, 'SECTORS', timeframe), use_container_width=True)
             st.markdown(f"""
 <div class="context-box">
 <div class="context-header">💡 RRG Logic</div>
@@ -770,7 +865,7 @@ Consult the <b>SPX Reactor</b>.
 
         with q2:
             st.markdown("**MACRO ASSETS**")
-            st.plotly_chart(plot_rrg(market_data, 'ASSETS', timeframe), use_container_width=True)
+            st.plotly_chart(plot_rrg(full_hist, 'ASSETS', timeframe), use_container_width=True)
             st.markdown(f"""
 <div class="context-box">
 <div class="context-header">🔎 Rotation Watch</div>
