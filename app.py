@@ -15,7 +15,7 @@ import yfinance as yf
 # 0) BASIC CONFIG / CONSTANTS
 # ----------------------------
 
-APP_VERSION = "MacroNexus Pro (Matrix Edition)"
+APP_VERSION = "MacroNexus Pro (Matrix Edition v2)"
 
 # Data universe
 TICKERS: Dict[str, str] = {
@@ -148,6 +148,8 @@ st.markdown(
     .badge-blue { background: rgba(59, 130, 246, 0.15); color: #60A5FA; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid rgba(59, 130, 246, 0.3); font-family: monospace; }
     .badge-green { background: rgba(16, 185, 129, 0.15); color: #34D399; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid rgba(16, 185, 129, 0.3); font-family: monospace; }
     .badge-red { background: rgba(239, 68, 68, 0.15); color: #F87171; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid rgba(239, 68, 68, 0.3); font-family: monospace; }
+    .badge-yellow { background: rgba(245, 158, 11, 0.15); color: #FBBF24; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid rgba(245, 158, 11, 0.3); font-family: monospace; }
+    .badge-gray { background: rgba(107, 114, 128, 0.15); color: #9CA3AF; padding: 2px 8px; border-radius: 4px; font-size: 11px; border: 1px solid rgba(107, 114, 128, 0.3); font-family: monospace; }
 
     .context-box {
         background: rgba(255,255,255,0.03);
@@ -165,11 +167,12 @@ st.markdown(
     .streamlit-expanderHeader { font-weight: 700; color: #E5E7EB; background-color: #161920; border-radius: 6px; }
     
     /* Table Styling for Matrix */
-    div[data-testid="stDataFrame"] {
-        border: 1px solid #374151;
-        border-radius: 8px;
-        overflow: hidden;
-    }
+    .matrix-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; color: #E5E7EB; border: 1px solid #374151; border-radius: 8px; overflow: hidden; }
+    .matrix-table th { background-color: #1F2937; text-align: left; padding: 12px 16px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9CA3AF; border-bottom: 1px solid #374151; }
+    .matrix-table td { padding: 12px 16px; border-bottom: 1px solid #2A2E39; background-color: rgba(30, 34, 45, 0.4); }
+    .matrix-table tr:last-child td { border-bottom: none; }
+    .matrix-table tr:hover td { background-color: rgba(59, 130, 246, 0.05); }
+    .strat-name { font-weight: 700; color: #60A5FA; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -449,95 +452,123 @@ STRATEGIES = {
 }
 
 # ----------------------------
-# 7) MATRIX DECISION LOGIC
+# 7) MATRIX DECISION LOGIC (UPDATED WITH HTML)
 # ----------------------------
 
-def generate_decision_matrix(regime: str) -> pd.DataFrame:
+def generate_decision_matrix_html(regime: str) -> str:
     """
-    Returns a DataFrame representing the Trade Lifecycle Matrix
+    Returns an HTML string representing the Trade Lifecycle Matrix
     Columns: Asset Class | Strategy Type | Action (Signal) | Context Logic
     """
     
-    # Common assets to track
-    assets = [
-        ("Tech/Growth", "QQQ, SMH, XLK"),
-        ("Broad Market", "SPY"),
-        ("Small Caps", "IWM"),
-        ("Defensives", "XLP, XLU, XLV"),
-        ("Cyclicals", "XLE, XLF, XLI"),
-        ("Safe Haven", "TLT, GLD"),
-        ("Volatility", "VIX Hedges"),
-        ("Cash/Income", "SGOV, Money Market")
-    ]
-    
     rows = []
     
+    # Badge helpers
+    def badge(text, color):
+        if color == "green":
+            return f'<span class="badge-green">{text}</span>'
+        elif color == "red":
+            return f'<span class="badge-red">{text}</span>'
+        elif color == "yellow":
+            return f'<span class="badge-yellow">{text}</span>'
+        else:
+            return f'<span class="badge-gray">{text}</span>'
+
+    # Strategy text styling
+    def strat(text):
+        return f'<span class="strat-name">{text}</span>'
+
     if regime == "GOLDILOCKS":
         rows = [
-            ("Tech/Growth", "Call Debit Spread / Long Calls", "🟢 OPEN / ADD", "Strong trend + Low Vol. Upside uncapped."),
-            ("Broad Market", "Directional Diagonals", "🟢 OPEN", "Stock replacement strategy works best here."),
-            ("Small Caps", "Put Credit Spreads", "🟡 HOLD", "Confirm participation. If laggy, just hold."),
-            ("Defensives", "Covered Calls", "🔴 TRIM / CLOSE", "Capital rotating out of safety into beta."),
-            ("Cyclicals", "Long Stock", "🟡 HOLD", "Participating but not leading."),
-            ("Safe Haven", "Long Calls", "🔴 CLOSE", "Yields stable or rising hurts bonds."),
-            ("Volatility", "Long VIX Calls", "⛔ FORBIDDEN", "Vol crush is active. Hedges will bleed."),
-            ("Cash/Income", "Cash", "🔴 DEPLOY", "Cash drag is expensive in this regime.")
+            ("Tech/Growth", f"{strat('Call Debit Spread')} / Long Calls", badge("OPEN / ADD", "green"), "Strong trend + Low Vol. Upside uncapped."),
+            ("Broad Market", f"{strat('Directional Diagonals')}", badge("OPEN", "green"), "Stock replacement strategy works best here."),
+            ("Small Caps", "Put Credit Spreads", badge("HOLD", "yellow"), "Confirm participation. If laggy, just hold."),
+            ("Defensives", "Covered Calls", badge("TRIM / CLOSE", "red"), "Capital rotating out of safety into beta."),
+            ("Cyclicals", "Long Stock", badge("HOLD", "yellow"), "Participating but not leading."),
+            ("Safe Haven", "Long Calls", badge("CLOSE", "red"), "Yields stable or rising hurts bonds."),
+            ("Volatility", "Long VIX Calls", badge("FORBIDDEN", "red"), "Vol crush is active. Hedges will bleed."),
+            ("Cash/Income", "Cash", badge("DEPLOY", "red"), "Cash drag is expensive in this regime.")
         ]
     
     elif regime == "LIQUIDITY":
         rows = [
-            ("Tech/Growth", "Risk Reversals", "🟢 OPEN (Aggressive)", "Dollar down = Tech/Crypto up. Leverage this."),
-            ("Broad Market", "Flyagonal (Drift)", "🟢 OPEN", "Capture the overnight drift."),
-            ("Small Caps", "Call Spreads", "🟢 OPEN", "Liquidity flows lift high beta/junk boats."),
-            ("Defensives", "--", "🔴 AVOID", "Opportunity cost is too high."),
-            ("Cyclicals", "Commodity Plays", "🟡 HOLD", "Oil/Gold benefit from weak dollar."),
-            ("Safe Haven", "Gold Longs", "🟢 OPEN", "Dollar debasement play."),
-            ("Volatility", "Puts on VIX", "🟡 OPEN (Speculative)", "Betting on continued complacency."),
-            ("Cash/Income", "--", "🔴 REDUCE", "Get fully invested.")
+            ("Tech/Growth", f"{strat('Risk Reversals')}", badge("OPEN (Aggressive)", "green"), "Dollar down = Tech/Crypto up. Leverage this."),
+            ("Broad Market", f"{strat('Flyagonal (Drift)')}", badge("OPEN", "green"), "Capture the overnight drift. Primary index play."),
+            ("Small Caps", "Call Spreads", badge("OPEN", "green"), "Liquidity flows lift high beta/junk boats."),
+            ("Defensives", "--", badge("AVOID", "red"), "Opportunity cost is too high."),
+            ("Cyclicals", "Commodity Plays", badge("HOLD", "yellow"), "Oil/Gold benefit from weak dollar."),
+            ("Safe Haven", "Gold Longs", badge("OPEN", "green"), "Dollar debasement play."),
+            ("Volatility", "Puts on VIX", badge("OPEN (Spec)", "yellow"), "Betting on continued complacency."),
+            ("Cash/Income", "--", badge("REDUCE", "red"), "Get fully invested.")
         ]
         
     elif regime == "REFLATION":
         rows = [
-            ("Tech/Growth", "Long Duration", "🔴 CLOSE / REDUCE", "Rising yields hurt future valuations."),
-            ("Broad Market", "Iron Condors", "🟡 HOLD (Wide)", "Market confused between earnings (Good) vs Rates (Bad)."),
-            ("Small Caps", "Call Spreads", "🟢 OPEN", "Banks/Energy are heavy in IWM/Value."),
-            ("Defensives", "--", "🟡 HOLD", "Neutral."),
-            ("Cyclicals", "Cash Secured Puts", "🟢 OPEN", "Energy/Banks are the leaders here."),
-            ("Safe Haven", "TLT Longs", "⛔ FORBIDDEN", "Don't fight the Fed/Bond Vigilantes."),
-            ("Volatility", "--", "🟡 WATCH", "Rates volatility can spill over."),
-            ("Cash/Income", "Short Term Bills", "🟢 OPEN", "Higher yields make cash attractive.")
+            ("Tech/Growth", "Long Duration", badge("CLOSE / REDUCE", "red"), "Rising yields hurt future valuations."),
+            ("Broad Market", f"{strat('Iron Condors')}", badge("HOLD (Wide)", "yellow"), "Market confused between earnings (Good) vs Rates (Bad)."),
+            ("Small Caps", "Call Spreads", badge("OPEN", "green"), "Banks/Energy are heavy in IWM/Value."),
+            ("Defensives", "--", badge("HOLD", "yellow"), "Neutral."),
+            ("Cyclicals", f"{strat('Cash Secured Puts')}", badge("OPEN", "green"), "Energy/Banks are the leaders here."),
+            ("Safe Haven", "TLT Longs", badge("FORBIDDEN", "red"), "Don't fight the Fed/Bond Vigilantes."),
+            ("Volatility", "--", badge("WATCH", "yellow"), "Rates volatility can spill over."),
+            ("Cash/Income", "Short Term Bills", badge("OPEN", "green"), "Higher yields make cash attractive.")
         ]
         
     elif regime == "NEUTRAL":
         rows = [
-            ("Tech/Growth", "Directional", "🔴 CLOSE", "No trend to pay for theta."),
-            ("Broad Market", "Calendars / Condors", "🟢 OPEN", "Theta harvest mode. Exploiting chop."),
-            ("Small Caps", "Range Plays", "🟢 OPEN", "RUT often rangebound. Good for TimeZone strat."),
-            ("Defensives", "Dividend Plays", "🟢 OPEN", "Safety outperformed in chop."),
-            ("Cyclicals", "--", "🟡 HOLD", "No clear signal."),
-            ("Safe Haven", "--", "🟡 HOLD", "Diversification buffer."),
-            ("Volatility", "VIX < 15?", "🔴 AVOID SHORTS", "Gamma risk too high if VIX wakes up."),
-            ("Cash/Income", "Money Market", "🟢 HOLD", "Paid to wait.")
+            ("Tech/Growth", "Directional", badge("CLOSE", "red"), "No trend to pay for theta."),
+            ("Broad Market", f"{strat('TimeEdge (SPX)')} / {strat('TimeZone (RUT)')}", badge("OPEN", "green"), "Theta harvest mode. Exploiting chop."),
+            ("Small Caps", "Range Plays", badge("OPEN", "green"), "RUT often rangebound. Good for TimeZone strat."),
+            ("Defensives", "Dividend Plays", badge("OPEN", "green"), "Safety outperformed in chop."),
+            ("Cyclicals", "--", badge("HOLD", "yellow"), "No clear signal."),
+            ("Safe Haven", "--", badge("HOLD", "yellow"), "Diversification buffer."),
+            ("Volatility", "VIX < 15?", badge("AVOID SHORTS", "red"), "Gamma risk too high if VIX wakes up."),
+            ("Cash/Income", "Money Market", badge("HOLD", "green"), "Paid to wait.")
         ]
         
     elif regime == "RISK OFF":
         rows = [
-            ("Tech/Growth", "Long Delta", "⛔ FORBIDDEN", "Do not catch falling knives."),
-            ("Broad Market", "A14 (Crash Catcher)", "🟢 OPEN", "Only way to profit from panic safely."),
-            ("Small Caps", "Credit Spreads", "🔴 CLOSE IMMEDIATELY", "Credit spreads will blow out."),
-            ("Defensives", "Long Stock", "🟡 HOLD", "Relative strength hiding spot."),
-            ("Cyclicals", "--", "🔴 REDUCE", "Recession fears hurt energy/industrials."),
-            ("Safe Haven", "TLT / Dollar", "🟢 OPEN", "Flight to safety trade."),
-            ("Volatility", "VIX Calls", "🟢 OPEN", "The only asset consistently up."),
-            ("Cash/Income", "Cash", "🟢 HOARD", "Preserve capital for the bottom.")
+            ("Tech/Growth", "Long Delta", badge("FORBIDDEN", "red"), "Do not catch falling knives."),
+            ("Broad Market", f"{strat('A14 (Crash Catcher)')}", badge("OPEN", "green"), "Only way to profit from panic safely."),
+            ("Small Caps", "Credit Spreads", badge("CLOSE NOW", "red"), "Credit spreads will blow out."),
+            ("Defensives", "Long Stock", badge("HOLD", "yellow"), "Relative strength hiding spot."),
+            ("Cyclicals", "--", badge("REDUCE", "red"), "Recession fears hurt energy/industrials."),
+            ("Safe Haven", "TLT / Dollar", badge("OPEN", "green"), "Flight to safety trade."),
+            ("Volatility", "VIX Calls", badge("OPEN", "green"), "The only asset consistently up."),
+            ("Cash/Income", "Cash", badge("HOARD", "green"), "Preserve capital for the bottom.")
         ]
         
     elif regime == "DATA ERROR":
-         rows = [("ALL ASSETS", "ALL STRATEGIES", "⛔ HALT TRADING", "Data integrity compromised.")]
+         rows = [("ALL ASSETS", "ALL STRATEGIES", badge("HALT TRADING", "red"), "Data integrity compromised.")]
 
-    # Convert to DF
-    df = pd.DataFrame(rows, columns=["Asset Class", "Recommended Strategy", "Signal", "Context / Logic"])
-    return df
+    # Build HTML Table
+    html_rows = ""
+    for r in rows:
+        html_rows += f"""
+        <tr>
+            <td>{r[0]}</td>
+            <td>{r[1]}</td>
+            <td>{r[2]}</td>
+            <td style="color: #9CA3AF; font-style: italic;">{r[3]}</td>
+        </tr>
+        """
+    
+    table_html = f"""
+    <table class="matrix-table">
+        <thead>
+            <tr>
+                <th width="15%">Asset Class</th>
+                <th width="25%">Strategy</th>
+                <th width="15%">Signal</th>
+                <th width="45%">Logic</th>
+            </tr>
+        </thead>
+        <tbody>
+            {html_rows}
+        </tbody>
+    </table>
+    """
+    return table_html
 
 
 # ----------------------------
@@ -1182,33 +1213,19 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
 
-    # ---- TAB 2: Decision Matrix (NEW) ----
+    # ---- TAB 2: Decision Matrix (NEW HTML VISUALS) ----
     with tab_matrix:
         st.subheader(f"🚦 Trade Lifecycle Matrix: {active_regime}")
         st.caption("Dynamic action signals based on the active regime. Always prioritize the 'Signal' column.")
         
-        matrix_df = generate_decision_matrix(active_regime)
-        
-        # We use a dataframe with column config to make it look like a terminal
-        st.dataframe(
-            matrix_df,
-            use_container_width=True,
-            hide_index=True,
-            height=400,
-            column_config={
-                "Asset Class": st.column_config.TextColumn("Asset Class", width="medium"),
-                "Recommended Strategy": st.column_config.TextColumn("Strategy", width="large"),
-                "Signal": st.column_config.TextColumn("Action Signal", width="medium"),
-                "Context / Logic": st.column_config.TextColumn("Analyst Logic", width="large"),
-            }
-        )
+        matrix_html = generate_decision_matrix_html(active_regime)
+        st.markdown(matrix_html, unsafe_allow_html=True)
         
         st.markdown("""
-        <div style="display: flex; gap: 20px; margin-top: 10px; font-size: 12px; color: #888;">
-            <div>🟢 <b>OPEN:</b> Favorable conditions for entry.</div>
-            <div>🟡 <b>HOLD:</b> Maintain position, but do not add risk.</div>
-            <div>🔴 <b>CLOSE:</b> Take profits or cut losses. Regime headwinds.</div>
-            <div>⛔ <b>FORBIDDEN:</b> High probability of failure. Do not trade.</div>
+        <div style="display: flex; gap: 20px; margin-top: 15px; font-size: 12px; color: #888;">
+            <div><span class="badge-green">OPEN</span> Favorable conditions for entry.</div>
+            <div><span class="badge-yellow">HOLD</span> Maintain position, but do not add risk.</div>
+            <div><span class="badge-red">CLOSE</span> Take profits or cut losses. Regime headwinds.</div>
         </div>
         """, unsafe_allow_html=True)
 
