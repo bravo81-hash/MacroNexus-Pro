@@ -544,30 +544,26 @@ def generate_decision_matrix_html(regime: str) -> str:
     # Build HTML Table
     html_rows = ""
     for r in rows:
-        html_rows += f"""
-        <tr>
-            <td>{r[0]}</td>
-            <td>{r[1]}</td>
-            <td>{r[2]}</td>
-            <td style="color: #9CA3AF; font-style: italic;">{r[3]}</td>
-        </tr>
-        """
+        html_rows += f"""<tr>
+<td>{r[0]}</td>
+<td>{r[1]}</td>
+<td>{r[2]}</td>
+<td style="color: #9CA3AF; font-style: italic;">{r[3]}</td>
+</tr>"""
     
-    table_html = f"""
-    <table class="matrix-table">
-        <thead>
-            <tr>
-                <th width="15%">Asset Class</th>
-                <th width="25%">Strategy</th>
-                <th width="15%">Signal</th>
-                <th width="45%">Logic</th>
-            </tr>
-        </thead>
-        <tbody>
-            {html_rows}
-        </tbody>
-    </table>
-    """
+    table_html = f"""<table class="matrix-table">
+<thead>
+<tr>
+<th width="15%">Asset Class</th>
+<th width="25%">Strategy</th>
+<th width="15%">Signal</th>
+<th width="45%">Logic</th>
+</tr>
+</thead>
+<tbody>
+{html_rows}
+</tbody>
+</table>"""
     return table_html
 
 
