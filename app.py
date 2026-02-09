@@ -944,6 +944,9 @@ def main() -> None:
         st.subheader("Notes")
         st.write("- Weekly view is WTD vs last completed Friday close.")
         st.write("- Trend/Momentum quadrant is an RRG-style proxy, not benchmark-relative RRG.")
+        
+        # ADDED CONTEXT: Explaining the risk-off color logic
+        st.info("**Color Logic:** Metrics are colored by 'Risk Impact'. Rising VIX, Yields, or Dollar are colored **Red** (Risk Off), even though their price is rising.")
 
     # Fetch data
     with st.spinner("Connecting to MacroNexus Core (batched yfinance)..."):
@@ -1074,9 +1077,20 @@ def main() -> None:
         with st.expander("🎛️ SPX Income Reactor Telemetry (Manual Input)", expanded=True):
             tc1, tc2, tc3, tc4 = st.columns(4)
             asset_mode = tc1.radio("Asset Class", ["INDEX (SPX/RUT)", "STOCKS"], horizontal=True)
-            iv_rank = tc2.slider("IV Rank (Percentile)", 0, 100, 45)
-            skew_rank = tc3.slider("Skew Rank", 0, 100, 50)
-            adx_val = tc4.slider("Trend ADX", 0, 60, 20)
+            
+            # ADDED CONTEXT: Tooltips explaining the technical inputs
+            iv_rank = tc2.slider(
+                "IV Rank (Percentile)", 0, 100, 45,
+                help="Implied Volatility Rank. 0 = Cheapest options in a year, 100 = Most expensive. High IV (>50) favors selling premium (Credit Spreads). Low IV (<30) favors buying premium (Debit Spreads)."
+            )
+            skew_rank = tc3.slider(
+                "Skew Rank", 0, 100, 50,
+                help="Cost of Put protection vs Calls. High Skew (>75) means the market is terrified of a crash (Puts are expensive). Low Skew means complacency."
+            )
+            adx_val = tc4.slider(
+                "Trend ADX", 0, 60, 20,
+                help="Average Directional Index. Measures trend strength, not direction. <20 = Chop/Range. >25 = Trending. >40 = Strong Trend."
+            )
 
         st.divider()
 
@@ -1382,6 +1396,7 @@ def main() -> None:
         with col_graph:
             st.plotly_chart(plot_nexus_graph_dots(market_data, timeframe), use_container_width=True)
         with col_legend:
+            # ADDED CONTEXT: Explaining the specific relationships in the graph
             st.markdown(
                 f"""
 <div class="context-box" style="margin-top: 0;">
@@ -1391,6 +1406,12 @@ def main() -> None:
   <div class="context-header">Current View</div>
   <div><b>{timeframe}</b></div>
   <br>
+  <div class="context-header">Key Correlations</div>
+  <div style="font-size: 11px; margin-bottom: 10px;">
+    • <b>Rates (US10Y) ➔ Tech (QQQ):</b> Rising rates typically hurt long-duration growth valuations.<br>
+    • <b>Dollar (DXY) ➔ Commodities:</b> A strong dollar makes Oil/Gold more expensive for foreign buyers, suppressing price.<br>
+    • <b>Credit (HYG) ➔ Spooz (SPY):</b> High Yield bonds often lead equities. If HYG cracks, SPY follows.
+  </div>
   <div class="context-header">Data Note</div>
   <div>Grey hollow nodes are invalid/missing feeds. Proxy sources are shown in hover.</div>
 </div>
