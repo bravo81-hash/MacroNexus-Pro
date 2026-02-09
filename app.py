@@ -866,6 +866,16 @@ def plot_trend_momentum_quadrant(full_hist: Dict[str, pd.Series], category: str,
     limit = float(max(df["Trend"].abs().max(), df["Momentum"].abs().max()) * 1.1)
     limit = max(limit, 1.0)
 
+    # QUADRANT LABELS (Added feature)
+    # Top Right: LEADING (Green)
+    fig.add_annotation(x=limit/2, y=limit/2, text="LEADING", showarrow=False, font=dict(color="rgba(34, 197, 94, 0.5)", size=20, weight="bold"))
+    # Bottom Right: WEAKENING (Yellow/Orange)
+    fig.add_annotation(x=limit/2, y=-limit/2, text="WEAKENING", showarrow=False, font=dict(color="rgba(245, 158, 11, 0.5)", size=20, weight="bold"))
+    # Bottom Left: LAGGING (Red)
+    fig.add_annotation(x=-limit/2, y=-limit/2, text="LAGGING", showarrow=False, font=dict(color="rgba(239, 68, 68, 0.5)", size=20, weight="bold"))
+    # Top Left: IMPROVING (Blue)
+    fig.add_annotation(x=-limit/2, y=limit/2, text="IMPROVING", showarrow=False, font=dict(color="rgba(59, 130, 246, 0.5)", size=20, weight="bold"))
+
     fig.update_layout(
         xaxis=dict(range=[-limit, limit], zeroline=False, showgrid=True, gridcolor="#333", title=f"Trend (vs SMA{trend_win})"),
         yaxis=dict(range=[-limit, limit], zeroline=False, showgrid=True, gridcolor="#333", title=f"Momentum (ROC {mom_win})"),
@@ -1332,6 +1342,38 @@ def main() -> None:
         with q2:
             st.markdown("**MACRO ASSETS**")
             st.plotly_chart(plot_trend_momentum_quadrant(full_hist, "ASSETS", timeframe), use_container_width=True)
+
+        # NEW CONTEXT SECTION FOR RRG
+        st.markdown(
+            """
+<div class="context-box" style="margin-top: 10px; border-left: 3px solid #F59E0B;">
+  <div class="context-header" style="color: #F59E0B;">How to Read (RRG Proxy)</div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+    <div>
+      <b style="color: #22c55e;">Top-Right (Green): LEADING</b><br>
+      Strong trend + Strong momentum. The winners. Buy dips/Hold.
+      <br><br>
+      <b style="color: #ef4444;">Bottom-Left (Red): LAGGING</b><br>
+      Weak trend + Weak momentum. The losers. Avoid or Short.
+    </div>
+    <div>
+      <b style="color: #f59e0b;">Bottom-Right (Orange): WEAKENING</b><br>
+      Strong trend but losing momentum. Watch for consolidation or reversal.
+      <br><br>
+      <b style="color: #3b82f6;">Top-Left (Blue): IMPROVING</b><br>
+      Weak trend but gaining momentum. Potential turnaround plays.
+    </div>
+  </div>
+  <br>
+  <div class="context-header" style="color: #F59E0B;">Analyst Note</div>
+  <div>
+    Assets typically rotate <b>Clockwise</b>. The ideal long setup is catching an asset moving from <span style="color:#3b82f6">IMPROVING</span> into <span style="color:#22c55e">LEADING</span>.
+    Be cautious of assets moving from <span style="color:#22c55e">LEADING</span> into <span style="color:#f59e0b">WEAKENING</span>.
+  </div>
+</div>
+""",
+            unsafe_allow_html=True
+        )
 
     # ---- TAB 4: Macro Machine ----
     with tab_macro:
