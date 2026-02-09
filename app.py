@@ -480,62 +480,62 @@ def generate_decision_matrix_html(regime: str) -> str:
 
     if regime == "GOLDILOCKS":
         rows = [
-            ("Tech/Growth", f"{strat('Call Debit Spread')} / Long Calls", badge("OPEN / ADD", "green"), "Strong trend + Low Vol. Upside uncapped."),
+            ("Tech/Growth", f"{strat('Call Debit Spread')} / {strat('Long Calls')}", badge("OPEN / ADD", "green"), "Strong trend + Low Vol. Upside uncapped."),
             ("Broad Market", f"{strat('Directional Diagonals')}", badge("OPEN", "green"), "Stock replacement strategy works best here."),
-            ("Small Caps", "Put Credit Spreads", badge("HOLD", "yellow"), "Confirm participation. If laggy, just hold."),
-            ("Defensives", "Covered Calls", badge("TRIM / CLOSE", "red"), "Capital rotating out of safety into beta."),
-            ("Cyclicals", "Long Stock", badge("HOLD", "yellow"), "Participating but not leading."),
-            ("Safe Haven", "Long Calls", badge("CLOSE", "red"), "Yields stable or rising hurts bonds."),
-            ("Volatility", "Long VIX Calls", badge("FORBIDDEN", "red"), "Vol crush is active. Hedges will bleed."),
-            ("Cash/Income", "Cash", badge("DEPLOY", "red"), "Cash drag is expensive in this regime.")
+            ("Small Caps", f"{strat('Put Credit Spreads')}", badge("HOLD", "yellow"), "Confirm participation. If laggy, just hold."),
+            ("Defensives", f"{strat('Covered Calls')}", badge("TRIM / CLOSE", "red"), "Capital rotating out of safety into beta."),
+            ("Cyclicals", f"{strat('Long Stock')}", badge("HOLD", "yellow"), "Participating but not leading."),
+            ("Safe Haven", f"{strat('Long Calls')}", badge("CLOSE", "red"), "Yields stable or rising hurts bonds."),
+            ("Volatility", f"{strat('Long VIX Calls')}", badge("FORBIDDEN", "red"), "Vol crush is active. Hedges will bleed."),
+            ("Cash/Income", f"{strat('Cash')}", badge("DEPLOY", "red"), "Cash drag is expensive in this regime.")
         ]
     
     elif regime == "LIQUIDITY":
         rows = [
             ("Tech/Growth", f"{strat('Risk Reversals')}", badge("OPEN (Aggressive)", "green"), "Dollar down = Tech/Crypto up. Leverage this."),
             ("Broad Market", f"{strat('Flyagonal (Drift)')}", badge("OPEN", "green"), "Capture the overnight drift. Primary index play."),
-            ("Small Caps", "Call Spreads", badge("OPEN", "green"), "Liquidity flows lift high beta/junk boats."),
+            ("Small Caps", f"{strat('Call Spreads')}", badge("OPEN", "green"), "Liquidity flows lift high beta/junk boats."),
             ("Defensives", "--", badge("AVOID", "red"), "Opportunity cost is too high."),
-            ("Cyclicals", "Commodity Plays", badge("HOLD", "yellow"), "Oil/Gold benefit from weak dollar."),
-            ("Safe Haven", "Gold Longs", badge("OPEN", "green"), "Dollar debasement play."),
-            ("Volatility", "Puts on VIX", badge("OPEN (Spec)", "yellow"), "Betting on continued complacency."),
+            ("Cyclicals", f"{strat('Commodity Plays')}", badge("HOLD", "yellow"), "Oil/Gold benefit from weak dollar."),
+            ("Safe Haven", f"{strat('Gold Longs')}", badge("OPEN", "green"), "Dollar debasement play."),
+            ("Volatility", f"{strat('Puts on VIX')}", badge("OPEN (Spec)", "yellow"), "Betting on continued complacency."),
             ("Cash/Income", "--", badge("REDUCE", "red"), "Get fully invested.")
         ]
         
     elif regime == "REFLATION":
         rows = [
-            ("Tech/Growth", "Long Duration", badge("CLOSE / REDUCE", "red"), "Rising yields hurt future valuations."),
+            ("Tech/Growth", f"{strat('Long Duration')}", badge("CLOSE / REDUCE", "red"), "Rising yields hurt future valuations."),
             ("Broad Market", f"{strat('Iron Condors')}", badge("HOLD (Wide)", "yellow"), "Market confused between earnings (Good) vs Rates (Bad)."),
-            ("Small Caps", "Call Spreads", badge("OPEN", "green"), "Banks/Energy are heavy in IWM/Value."),
+            ("Small Caps", f"{strat('Call Spreads')}", badge("OPEN", "green"), "Banks/Energy are heavy in IWM/Value."),
             ("Defensives", "--", badge("HOLD", "yellow"), "Neutral."),
             ("Cyclicals", f"{strat('Cash Secured Puts')}", badge("OPEN", "green"), "Energy/Banks are the leaders here."),
-            ("Safe Haven", "TLT Longs", badge("FORBIDDEN", "red"), "Don't fight the Fed/Bond Vigilantes."),
+            ("Safe Haven", f"{strat('TLT Longs')}", badge("FORBIDDEN", "red"), "Don't fight the Fed/Bond Vigilantes."),
             ("Volatility", "--", badge("WATCH", "yellow"), "Rates volatility can spill over."),
-            ("Cash/Income", "Short Term Bills", badge("OPEN", "green"), "Higher yields make cash attractive.")
+            ("Cash/Income", f"{strat('Short Term Bills')}", badge("OPEN", "green"), "Higher yields make cash attractive.")
         ]
         
     elif regime == "NEUTRAL":
         rows = [
-            ("Tech/Growth", "Directional", badge("CLOSE", "red"), "No trend to pay for theta."),
+            ("Tech/Growth", f"{strat('Directional')}", badge("CLOSE", "red"), "No trend to pay for theta."),
             ("Broad Market", f"{strat('TimeEdge (SPX)')} / {strat('TimeZone (RUT)')}", badge("OPEN", "green"), "Theta harvest mode. Exploiting chop."),
-            ("Small Caps", "Range Plays", badge("OPEN", "green"), "RUT often rangebound. Good for TimeZone strat."),
-            ("Defensives", "Dividend Plays", badge("OPEN", "green"), "Safety outperformed in chop."),
+            ("Small Caps", f"{strat('Range Plays')}", badge("OPEN", "green"), "RUT often rangebound. Good for TimeZone strat."),
+            ("Defensives", f"{strat('Dividend Plays')}", badge("OPEN", "green"), "Safety outperformed in chop."),
             ("Cyclicals", "--", badge("HOLD", "yellow"), "No clear signal."),
             ("Safe Haven", "--", badge("HOLD", "yellow"), "Diversification buffer."),
             ("Volatility", "VIX < 15?", badge("AVOID SHORTS", "red"), "Gamma risk too high if VIX wakes up."),
-            ("Cash/Income", "Money Market", badge("HOLD", "green"), "Paid to wait.")
+            ("Cash/Income", f"{strat('Money Market')}", badge("HOLD", "green"), "Paid to wait.")
         ]
         
     elif regime == "RISK OFF":
         rows = [
-            ("Tech/Growth", "Long Delta", badge("FORBIDDEN", "red"), "Do not catch falling knives."),
+            ("Tech/Growth", f"{strat('Long Delta')}", badge("FORBIDDEN", "red"), "Do not catch falling knives."),
             ("Broad Market", f"{strat('A14 (Crash Catcher)')}", badge("OPEN", "green"), "Only way to profit from panic safely."),
-            ("Small Caps", "Credit Spreads", badge("CLOSE NOW", "red"), "Credit spreads will blow out."),
-            ("Defensives", "Long Stock", badge("HOLD", "yellow"), "Relative strength hiding spot."),
+            ("Small Caps", f"{strat('Credit Spreads')}", badge("CLOSE NOW", "red"), "Credit spreads will blow out."),
+            ("Defensives", f"{strat('Long Stock')}", badge("HOLD", "yellow"), "Relative strength hiding spot."),
             ("Cyclicals", "--", badge("REDUCE", "red"), "Recession fears hurt energy/industrials."),
-            ("Safe Haven", "TLT / Dollar", badge("OPEN", "green"), "Flight to safety trade."),
-            ("Volatility", "VIX Calls", badge("OPEN", "green"), "The only asset consistently up."),
-            ("Cash/Income", "Cash", badge("HOARD", "green"), "Preserve capital for the bottom.")
+            ("Safe Haven", f"{strat('TLT')} / {strat('Dollar')}", badge("OPEN", "green"), "Flight to safety trade."),
+            ("Volatility", f"{strat('VIX Calls')}", badge("OPEN", "green"), "The only asset consistently up."),
+            ("Cash/Income", f"{strat('Cash')}", badge("HOARD", "green"), "Preserve capital for the bottom.")
         ]
         
     elif regime == "DATA ERROR":
