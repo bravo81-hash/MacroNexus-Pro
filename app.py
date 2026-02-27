@@ -15,7 +15,7 @@ import yfinance as yf
 # 0) BASIC CONFIG / CONSTANTS
 # ----------------------------
 
-APP_VERSION = "MacroNexus Pro (Matrix Edition v2.2-Restored)"
+APP_VERSION = "MacroNexus Pro (Matrix Edition v2.3-Final-Fix)"
 
 # Data universe
 TICKERS: Dict[str, str] = {
@@ -208,32 +208,23 @@ def _safe_is_multiindex_columns(df: pd.DataFrame) -> bool:
 def _extract_close_series(df_batch: pd.DataFrame, symbol: str) -> Optional[pd.Series]:
     if df_batch is None or df_batch.empty:
         return None
-
     try:
         if _safe_is_multiindex_columns(df_batch):
             top = df_batch.columns.get_level_values(0)
-            if symbol not in set(top):
-                return None
-
+            if symbol not in set(top): return None
             cols_lvl1 = set(df_batch[symbol].columns)
-            if "Close" in cols_lvl1:
-                s = df_batch[symbol]["Close"].dropna()
-            elif "Adj Close" in cols_lvl1:
-                s = df_batch[symbol]["Adj Close"].dropna()
-            else:
-                return None
+            if "Close" in cols_lvl1: s = df_batch[symbol]["Close"].dropna()
+            elif "Adj Close" in cols_lvl1: s = df_batch[symbol]["Adj Close"].dropna()
+            else: return None
             return s if isinstance(s, pd.Series) else None
-
         if "Close" in df_batch.columns:
             s = df_batch["Close"].dropna()
             return s if isinstance(s, pd.Series) else None
         if "Adj Close" in df_batch.columns:
             s = df_batch["Adj Close"].dropna()
             return s if isinstance(s, pd.Series) else None
-
         return None
-    except Exception:
-        return None
+    except Exception: return None
 
 
 def _weekly_wtd_reference(series: pd.Series) -> Tuple[float, float]:
@@ -241,28 +232,20 @@ def _weekly_wtd_reference(series: pd.Series) -> Tuple[float, float]:
     FIX A2/A3: Zero-division guard and holiday/NaN robustness.
     """
     curr = float(series.iloc[-1])
-
     if len(series) < 10:
         prev = float(series.iloc[-2]) if len(series) >= 2 else curr
         return curr, prev
-
     weekly = series.resample("W-FRI").last().dropna()
     if len(weekly) >= 2:
         last_date = series.index[-1]
         is_friday_close = (getattr(last_date, "weekday", lambda: -1)() == 4) and (weekly.index[-1].date() == last_date.date())
-
         if is_friday_close:
             prev_friday = float(weekly.iloc[-2])
             return curr, prev_friday
-
         prev_friday = float(weekly.iloc[-2])
         return curr, prev_friday
-
     prev_approx = float(series.iloc[-6]) if len(series) >= 6 else float(series.iloc[-2])
-    
-    if prev_approx == 0 or not np.isfinite(prev_approx):
-        return curr, curr
-        
+    if prev_approx == 0 or not np.isfinite(prev_approx): return curr, curr
     return curr, prev_approx
 
 
@@ -270,269 +253,119 @@ def _weekly_wtd_reference(series: pd.Series) -> Tuple[float, float]:
 def fetch_market_data() -> Tuple[Dict[str, dict], pd.DataFrame, Dict[str, pd.Series], DataHealth]:
     fetched_at = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     all_symbols = sorted(set(list(TICKERS.values()) + list(PROXIES.values())))
-
     try:
-        df_batch = yf.download(
-            tickers=all_symbols,
-            period="1y",
-            interval="1d",
-            group_by="ticker",
-            threads=True,
-            auto_adjust=False,
-            progress=False,
-        )
+        df_batch = yf.download(tickers=all_symbols, period="1y", interval="1d", group_by="ticker", threads=True, auto_adjust=False, progress=False)
     except Exception as e:
-        health = DataHealth(
-            fetched_at_utc=fetched_at,
-            valid_keys=[],
-            invalid_keys=list(TICKERS.keys()),
-            proxy_used={},
-            errors={"__download__": str(e)},
-            note="API exception during download",
-        )
+        health = DataHealth(fetched_at_utc=fetched_at, valid_keys=[], invalid_keys=list(TICKERS.keys()), proxy_used={}, errors={"__download__": str(e)})
         return {}, pd.DataFrame(), {}, health
-
     if df_batch is None or df_batch.empty:
-        health = DataHealth(
-            fetched_at_utc=fetched_at,
-            valid_keys=[],
-            invalid_keys=list(TICKERS.keys()),
-            proxy_used={},
-            errors={"__download__": "No data returned from Yahoo"},
-            note="Empty download",
-        )
+        health = DataHealth(fetched_at_utc=fetched_at, valid_keys=[], invalid_keys=list(TICKERS.keys()), proxy_used={}, errors={"__download__": "No data returned"})
         return {}, pd.DataFrame(), {}, health
-
-    data: Dict[str, dict] = {}
-    history_data: Dict[str, pd.Series] = {}
-    full_hist: Dict[str, pd.Series] = {}
-    errors: Dict[str, str] = {}
-    proxy_used: Dict[str, str] = {}
-
+    data, history_data, full_hist, errors, proxy_used = {}, {}, {}, {}, {}
     for key, primary_symbol in TICKERS.items():
-        used_symbol = primary_symbol
-        source = "primary"
-
+        used_symbol, source = primary_symbol, "primary"
         s = _extract_close_series(df_batch, primary_symbol)
-
         if (s is None or len(s) < 50) and key in PROXIES:
             proxy_symbol = PROXIES[key]
             s_proxy = _extract_close_series(df_batch, proxy_symbol)
             if s_proxy is not None and len(s_proxy) >= 50:
-                s = s_proxy
-                used_symbol = proxy_symbol
-                source = "proxy"
+                s, used_symbol, source = s_proxy, proxy_symbol, "proxy"
                 proxy_used[key] = proxy_symbol
-
         if s is None or len(s) < 2:
             data[key] = {"valid": False, "symbol_primary": primary_symbol, "symbol_used": used_symbol, "source": source}
-            errors[key] = "Missing or insufficient data"
+            errors[key] = "Missing data"
             continue
-
         try:
             s = s.sort_index()
-            if not isinstance(s.index, pd.DatetimeIndex):
-                data[key] = {"valid": False, "symbol_primary": primary_symbol, "symbol_used": used_symbol, "source": source}
-                errors[key] = "Non-datetime index"
-                continue
-        except Exception as e:
-            data[key] = {"valid": False, "symbol_primary": primary_symbol, "symbol_used": used_symbol, "source": source}
-            errors[key] = f"Series normalization error: {e}"
-            continue
-
-        history_data[key] = s
-        full_hist[key] = s
-
-        curr = float(s.iloc[-1])
-        prev = float(s.iloc[-2])
+            if not isinstance(s.index, pd.DatetimeIndex): continue
+        except Exception: continue
+        history_data[key], full_hist[key] = s, s
+        curr, prev = float(s.iloc[-1]), float(s.iloc[-2])
         curr_w, prev_w = _weekly_wtd_reference(s)
-
         if key == "US10Y":
-            display_price = curr / 10.0
-            chg_d = (curr - prev) * 10.0  # BPS Logic
-            chg_w = (curr_w - prev_w) * 10.0
-            fmt = "bps"
+            display_price, chg_d, chg_w, fmt = curr / 10.0, (curr - prev) * 10.0, (curr_w - prev_w) * 10.0, "bps"
         else:
             display_price = curr
             chg_d = (((curr - prev) / prev) * 100.0) if prev != 0 else 0.0
             chg_w = (((curr_w - prev_w) / prev_w) * 100.0) if (prev_w != 0 and np.isfinite(prev_w)) else 0.0
             fmt = "%"
-
-        data[key] = {
-            "price": display_price,
-            "change": float(chg_d),
-            "change_w": float(chg_w),
-            "fmt": fmt,
-            "valid": True,
-            "symbol_primary": primary_symbol,
-            "symbol_used": used_symbol,
-            "source": source,
-        }
-
-    valid_keys = [k for k, v in data.items() if v.get("valid")]
-    invalid_keys = [k for k, v in data.items() if not v.get("valid")]
-
-    health = DataHealth(
-        fetched_at_utc=fetched_at,
-        valid_keys=valid_keys,
-        invalid_keys=invalid_keys,
-        proxy_used=proxy_used,
-        errors=errors,
-        note="Weekly view is WTD vs last completed Friday close",
-    )
-
+        data[key] = {"price": display_price, "change": float(chg_d), "change_w": float(chg_w), "fmt": fmt, "valid": True, "symbol_primary": primary_symbol, "symbol_used": used_symbol, "source": source}
+    health = DataHealth(fetched_at_utc=fetched_at, valid_keys=[k for k, v in data.items() if v.get("valid")], invalid_keys=[k for k, v in data.items() if not v.get("valid")], proxy_used=proxy_used, errors=errors)
     history_df = pd.DataFrame(history_data)
     st.session_state["raw_df_batch"] = df_batch
-
     return data, history_df, full_hist, health
 
 
 # ----------------------------
-# 6) STRATEGY DATABASE (MATRIX LOGIC)
+# 6) STRATEGY DATABASE
 # ----------------------------
 
 STRATEGIES = {
     "GOLDILOCKS": {
         "desc": "Low Vol + Steady Trend. Market climbing wall of worry.",
-        "risk": "1.5%",
-        "bias": "Long",
-        "index": {"strat": "Directional Diagonal", "dte": "Front 17 / Back 31", "setup": "Buy Back ITM (70D) / Sell Front OTM (30D)", "notes": "Stock replacement. Trend (Delta) + Decay (Theta). Upside is uncapped."},
-        "stock": {"strat": "Call Debit Spreads", "dte": "45-60 DTE", "setup": "Buy 60D / Sell 30D (Spread)", "notes": "Focus on Relative Strength Leaders (Tech, Semis). Use pullbacks to EMA21."},
-        "longs": "TECH, SEMIS, DISC",
-        "shorts": "VIX, TLT",
+        "risk": "1.5%", "bias": "Long",
+        "index": {"strat": "Directional Diagonal", "dte": "Front 17 / Back 31", "setup": "Buy Back ITM (70D) / Sell Front OTM (30D)", "notes": "Trend (Delta) + Decay (Theta). Upside is uncapped."},
+        "stock": {"strat": "Call Debit Spreads", "dte": "45-60 DTE", "setup": "Buy 60D / Sell 30D (Spread)", "notes": "Focus on Relative Strength Leaders. Use pullbacks to EMA21."},
+        "longs": "TECH, SEMIS, DISC", "shorts": "VIX, TLT",
     },
     "LIQUIDITY": {
         "desc": "High Liquidity / Dollar Weakness. Drift Up environment.",
-        "risk": "1.0%",
-        "bias": "Aggressive Long",
-        "index": {"strat": "Flyagonal (Drift)", "dte": "Entry 7-10 DTE", "setup": "Upside: Call BWB (Long +10 / Short 2x +50 / Long +60). Downside: Put Diagonal.", "notes": "Captures the drift. Upside tent funds the downside floor. Target 4% Flash Win."},
-        "stock": {"strat": "Risk Reversals", "dte": "60 DTE", "setup": "Sell OTM Put / Buy OTM Call", "notes": "Funding long delta with short volatility. Best for High Beta (Crypto proxies)."},
-        "longs": "BTC, SEMIS, QQQ",
-        "shorts": "DXY, CASH",
+        "risk": "1.0%", "bias": "Aggressive Long",
+        "index": {"strat": "Flyagonal (Drift)", "dte": "Entry 7-10 DTE", "setup": "Upside: Call BWB / Downside: Put Diagonal.", "notes": "Captures drift. Upside tent funds floor. Target 4% Flash Win."},
+        "stock": {"strat": "Risk Reversals", "dte": "60 DTE", "setup": "Sell OTM Put / Buy OTM Call", "notes": "Funding long delta with short volatility."},
+        "longs": "BTC, SEMIS, QQQ", "shorts": "DXY, CASH",
     },
     "REFLATION": {
         "desc": "Inflation / Rates Rising. Real Assets outperform Tech.",
-        "risk": "1.0%",
-        "bias": "Cyclical Long",
-        "index": {"strat": "Call Spread (Cyclicals)", "dte": "45 DTE", "setup": "Buy 60D / Sell 30D", "notes": "Focus on Russell 2000 (IWM). Avoid long duration Tech (QQQ) as rates rise."},
-        "stock": {"strat": "Cash Secured Puts", "dte": "30-45 DTE", "setup": "Sell 30D Puts on Energy/Banks", "notes": "Energy (XLE) and Banks (XLF) benefit from rising yields. Sell premium to acquire."},
-        "longs": "ENERGY, BANKS, IND",
-        "shorts": "TLT, TECH",
+        "risk": "1.0%", "bias": "Cyclical Long",
+        "index": {"strat": "Call Spread (Cyclicals)", "dte": "45 DTE", "setup": "Buy 60D / Sell 30D", "notes": "Focus on IWM. Avoid long duration Tech as rates rise."},
+        "stock": {"strat": "Cash Secured Puts", "dte": "30-45 DTE", "setup": "Sell 30D Puts on Energy/Banks", "notes": "Energy/Banks benefit from yields. Sell premium to acquire."},
+        "longs": "ENERGY, BANKS, IND", "shorts": "TLT, TECH",
     },
     "NEUTRAL": {
         "desc": "Chop / Range Bound. No clear direction.",
-        "risk": "Income Size",
-        "bias": "Neutral/Theta",
-        "index": {"strat": "TimeEdge (SPX) / TimeZone (RUT)", "dte": "Entry 15 / Exit 7", "setup": "Put Calendar Spread (ATM) or Double Calendar", "notes": "Pure Theta play. Sell 15 DTE / Buy 22+ DTE. Requires VIX < 20."},
-        "stock": {"strat": "Iron Condor", "dte": "30-45 DTE", "setup": "Sell 20D Call / Sell 20D Put (Wings 10 wide)", "notes": "Delta neutral income. Best on low beta stocks (KO, PEP) during chop."},
-        "longs": "INCOME, CASH",
-        "shorts": "MOMENTUM",
+        "risk": "Income Size", "bias": "Neutral/Theta",
+        "index": {"strat": "TimeEdge (SPX) / TimeZone (RUT)", "dte": "Entry 15 / Exit 7", "setup": "Put Calendar or Double Calendar", "notes": "Pure Theta play. Sell 15 DTE / Buy 22+ DTE."},
+        "stock": {"strat": "Iron Condor", "dte": "30-45 DTE", "setup": "Sell 20D Call / Sell 20D Put", "notes": "Delta neutral income. Best on low beta stocks."},
+        "longs": "INCOME, CASH", "shorts": "MOMENTUM",
     },
     "RISK OFF": {
         "desc": "High Volatility / Credit Stress. Preservation mode.",
-        "risk": "0.5%",
-        "bias": "Short/Hedge",
-        "index": {"strat": "A14 Put BWB", "dte": "Entry 14 / Exit 7", "setup": "Long ATM / Short 2x -40 / (Skip) / Long -60", "notes": "Crash Catcher. Zero upside risk. Profit tent expands into the crash. Enter Friday AM."},
-        "stock": {"strat": "Put Debit Spreads", "dte": "60 DTE", "setup": "Buy 40D / Sell 15D", "notes": "Directional downside. Selling the 15D put reduces cost and offsets IV crush."},
-        "longs": "VIX, DXY",
-        "shorts": "SPY, IWM, HYG",
+        "risk": "0.5%", "bias": "Short/Hedge",
+        "index": {"strat": "A14 Put BWB", "dte": "Entry 14 / Exit 7", "setup": "Long ATM / Short 2x -40 / Long -60", "notes": "Crash Catcher. Zero upside risk. Profit tent expands into crash."},
+        "stock": {"strat": "Put Debit Spreads", "dte": "60 DTE", "setup": "Buy 40D / Sell 15D", "notes": "Selling the 15D put reduces cost and offsets IV crush."},
+        "longs": "VIX, DXY", "shorts": "SPY, IWM, HYG",
     },
     "DATA ERROR": {
-        "desc": "CRITICAL DATA FEED FAILURE",
-        "risk": "0.0%",
-        "bias": "Flat",
-        "index": {"strat": "STAND ASIDE", "dte": "--", "setup": "--", "notes": "Do not trade. Data integrity compromised."},
-        "stock": {"strat": "STAND ASIDE", "dte": "--", "setup": "--", "notes": "Do not trade. Data integrity compromised."},
-        "longs": "--",
-        "shorts": "--",
+        "desc": "CRITICAL DATA FEED FAILURE", "risk": "0.0%", "bias": "Flat",
+        "index": {"strat": "STAND ASIDE", "dte": "--", "setup": "--", "notes": "Data integrity compromised."},
+        "stock": {"strat": "STAND ASIDE", "dte": "--", "setup": "--", "notes": "Data integrity compromised."},
+        "longs": "--", "shorts": "--",
     },
 }
 
 
 # ----------------------------
-# 7) MATRIX DECISION LOGIC (UPDATED WITH HTML)
+# 7) MATRIX DECISION LOGIC
 # ----------------------------
 
 def generate_decision_matrix_html(regime: str) -> str:
     rows = []
-    
-    def badge(text, color):
-        if color == "green": return f'<span class="badge-green">{text}</span>'
-        elif color == "red": return f'<span class="badge-red">{text}</span>'
-        elif color == "yellow": return f'<span class="badge-yellow">{text}</span>'
-        else: return f'<span class="badge-gray">{text}</span>'
-
-    def strat(text):
-        return f'<span class="strat-name">{text}</span>'
-
+    def badge(t, c): return f'<span class="badge-{c}">{t}</span>'
+    def strat(t): return f'<span class="strat-name">{t}</span>'
     if regime == "GOLDILOCKS":
-        rows = [
-            ("Tech/Growth", f"{strat('Call Debit Spread')} / {strat('Long Calls')}", badge("OPEN / ADD", "green"), "Strong trend + Low Vol. Upside uncapped."),
-            ("Broad Market", f"{strat('Directional Diagonals')}", badge("OPEN", "green"), "Stock replacement strategy works best here."),
-            ("Small Caps", f"{strat('Put Credit Spreads')}", badge("HOLD", "yellow"), "Confirm participation. If laggy, just hold."),
-            ("Defensives", f"{strat('Covered Calls')}", badge("TRIM / CLOSE", "red"), "Capital rotating out of safety into beta."),
-            ("Cyclicals", f"{strat('Long Stock')}", badge("HOLD", "yellow"), "Participating but not leading."),
-            ("Safe Haven", f"{strat('Long Calls')}", badge("CLOSE", "red"), "Yields stable or rising hurts bonds."),
-            ("Volatility", f"{strat('Long VIX Calls')}", badge("FORBIDDEN", "red"), "Vol crush is active. Hedges will bleed."),
-            ("Cash/Income", f"{strat('Cash')}", badge("DEPLOY", "red"), "Cash drag is expensive in this regime.")
-        ]
-    elif regime == "LIQUIDITY":
-        rows = [
-            ("Tech/Growth", f"{strat('Risk Reversals')}", badge("OPEN (Aggressive)", "green"), "Dollar down = Tech/Crypto up. Leverage this."),
-            ("Broad Market", f"{strat('Flyagonal (Drift)')}", badge("OPEN", "green"), "Capture the overnight drift. Primary index play."),
-            ("Small Caps", f"{strat('Call Spreads')}", badge("OPEN", "green"), "Liquidity flows lift high beta/junk boats."),
-            ("Defensives", "--", badge("AVOID", "red"), "Opportunity cost is too high."),
-            ("Cyclicals", f"{strat('Commodity Plays')}", badge("HOLD", "yellow"), "Oil/Gold benefit from weak dollar."),
-            ("Safe Haven", f"{strat('Gold Longs')}", badge("OPEN", "green"), "Dollar debasement play."),
-            ("Volatility", f"{strat('Puts on VIX')}", badge("OPEN (Spec)", "yellow"), "Betting on continued complacency."),
-            ("Cash/Income", "--", badge("REDUCE", "red"), "Get fully invested.")
-        ]
-    elif regime == "REFLATION":
-        rows = [
-            ("Tech/Growth", f"{strat('Long Duration')}", badge("CLOSE / REDUCE", "red"), "Rising yields hurt future valuations."),
-            ("Broad Market", f"{strat('Iron Condors')}", badge("HOLD (Wide)", "yellow"), "Market confused between earnings vs Rates."),
-            ("Small Caps", f"{strat('Call Spreads')}", badge("OPEN", "green"), "Banks/Energy are heavy in IWM/Value."),
-            ("Defensives", "--", badge("HOLD", "yellow"), "Neutral."),
-            ("Cyclicals", f"{strat('Cash Secured Puts')}", badge("OPEN", "green"), "Energy/Banks are the leaders here."),
-            ("Safe Haven", f"{strat('TLT Longs')}", badge("FORBIDDEN", "red"), "Don't fight the Fed/Bond Vigilantes."),
-            ("Volatility", "--", badge("WATCH", "yellow"), "Rates volatility can spill over."),
-            ("Cash/Income", f"{strat('Short Term Bills')}", badge("OPEN", "green"), "Higher yields make cash attractive.")
-        ]
-    elif regime == "NEUTRAL":
-        rows = [
-            ("Tech/Growth", f"{strat('Directional')}", badge("CLOSE", "red"), "No trend to pay for theta."),
-            ("Broad Market", f"{strat('TimeEdge (SPX)')} / {strat('TimeZone (RUT)')}", badge("OPEN", "green"), "Theta harvest mode. Exploiting chop."),
-            ("Small Caps", f"{strat('Range Plays')}", badge("OPEN", "green"), "RUT often rangebound. Good for TimeZone strat."),
-            ("Defensives", f"{strat('Dividend Plays')}", badge("OPEN", "green"), "Safety outperformed in chop."),
-            ("Cyclicals", "--", badge("HOLD", "yellow"), "No clear signal."),
-            ("Safe Haven", "--", badge("HOLD", "yellow"), "Diversification buffer."),
-            ("Volatility", "VIX < 15?", badge("AVOID SHORTS", "red"), "Gamma risk too high if VIX wakes up."),
-            ("Cash/Income", f"{strat('Money Market')}", badge("HOLD", "green"), "Paid to wait.")
-        ]
+        rows = [("Tech/Growth", f"{strat('Call Debit Spread')} / {strat('Long Calls')}", badge("OPEN / ADD", "green"), "Strong trend + Low Vol. Upside uncapped."), ("Broad Market", f"{strat('Directional Diagonals')}", badge("OPEN", "green"), "Stock replacement strategy works best here."), ("Small Caps", f"{strat('Put Credit Spreads')}", badge("HOLD", "yellow"), "Confirm participation."), ("Volatility", f"{strat('Long VIX Calls')}", badge("FORBIDDEN", "red"), "Vol crush active. Hedges will bleed.")]
     elif regime == "RISK OFF":
-        rows = [
-            ("Tech/Growth", f"{strat('Long Delta')}", badge("FORBIDDEN", "red"), "Do not catch falling knives."),
-            ("Broad Market", f"{strat('A14 (Crash Catcher)')}", badge("OPEN", "green"), "Only way to profit from panic safely."),
-            ("Small Caps", f"{strat('Credit Spreads')}", badge("CLOSE NOW", "red"), "Credit spreads will blow out."),
-            ("Defensives", f"{strat('Long Stock')}", badge("HOLD", "yellow"), "Relative strength hiding spot."),
-            ("Cyclicals", "--", badge("REDUCE", "red"), "Recession fears hurt energy/industrials."),
-            ("Safe Haven", f"{strat('TLT')} / {strat('Dollar')}", badge("OPEN", "green"), "Flight to safety trade."),
-            ("Volatility", f"{strat('VIX Calls')}", badge("OPEN", "green"), "The only asset consistently up."),
-            ("Cash/Income", f"{strat('Cash')}", badge("HOARD", "green"), "Preserve capital for the bottom.")
-        ]
-    elif regime == "DATA ERROR":
-         rows = [("ALL ASSETS", "ALL STRATEGIES", badge("HALT TRADING", "red"), "Data integrity compromised.")]
-
-    html_rows = "".join([f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td style='color: #9CA3AF; font-style: italic;'>{r[3]}</td></tr>" for r in rows])
+        rows = [("Tech/Growth", f"{strat('Long Delta')}", badge("FORBIDDEN", "red"), "Do not catch falling knives."), ("Broad Market", f"{strat('A14 (Crash Catcher)')}", badge("OPEN", "green"), "Only way to profit from panic safely."), ("Volatility", f"{strat('VIX Calls')}", badge("OPEN", "green"), "The only asset consistently up.")]
+    else:
+        rows = [("ALL ASSETS", "Strategy Matrix", badge("CHECK PLAYBOOK", "blue"), "Consult individual strategy rules for this regime.")]
     
-    table_html = f"""<table class="matrix-table">
-<thead><tr><th width="15%">Asset Class</th><th width="25%">Strategy</th><th width="15%">Signal</th><th width="45%">Logic</th></tr></thead>
-<tbody>{html_rows}</tbody></table>"""
-    return table_html
+    html_rows = "".join([f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td style='color: #9CA3AF; font-style: italic;'>{r[3]}</td></tr>" for r in rows])
+    return f"""<table class="matrix-table"><thead><tr><th width="15%">Asset Class</th><th width="25%">Strategy</th><th width="15%">Signal</th><th width="45%">Logic</th></tr></thead><tbody>{html_rows}</tbody></table>"""
 
 
 # ----------------------------
-# 8) HELPERS (ADX / REGIME)
+# 8) HELPERS
 # ----------------------------
 
 def get_val(data: Dict[str, dict], key: str, timeframe: str) -> float:
@@ -543,62 +376,40 @@ def get_val(data: Dict[str, dict], key: str, timeframe: str) -> float:
 
 def calculate_adx(df_ohlc: pd.DataFrame, period: int = 14) -> float:
     df = df_ohlc.copy()
-    df['h-l'] = df['High'] - df['Low']
-    df['h-pc'] = abs(df['High'] - df['Close'].shift(1))
-    df['l-pc'] = abs(df['Low'] - df['Close'].shift(1))
-    df['tr'] = df[['h-l', 'h-pc', 'l-pc']].max(axis=1)
-    df['plus_dm'] = np.where((df['High'] - df['High'].shift(1) > df['Low'].shift(1) - df['Low']) & (df['High'] - df['High'].shift(1) > 0), df['High'] - df['High'].shift(1), 0)
-    df['minus_dm'] = np.where((df['Low'].shift(1) - df['Low'] > df['High'] - df['High'].shift(1)) & (df['Low'].shift(1) - df['Low'] > 0), df['Low'].shift(1) - df['Low'], 0)
-    
-    def wilders_smooth(x, n):
-        out = np.zeros_like(x)
-        out[n] = x[1:n+1].mean()
+    df['tr'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Close'].shift(1)), abs(df['Low'] - df['Close'].shift(1))))
+    df['+dm'] = np.where((df['High'] - df['High'].shift(1) > df['Low'].shift(1) - df['Low']) & (df['High'] - df['High'].shift(1) > 0), df['High'] - df['High'].shift(1), 0)
+    df['-dm'] = np.where((df['Low'].shift(1) - df['Low'] > df['High'] - df['High'].shift(1)) & (df['Low'].shift(1) - df['Low'] > 0), df['Low'].shift(1) - df['Low'], 0)
+    def smooth(x, n):
+        out = np.zeros_like(x); out[n] = x[1:n+1].mean()
         for i in range(n+1, len(x)): out[i] = (out[i-1] * (n-1) + x[i]) / n
         return out
-
-    df['tr_s'] = wilders_smooth(df['tr'].values, period)
-    df['plus_dm_s'] = wilders_smooth(df['plus_dm'].values, period)
-    df['minus_dm_s'] = wilders_smooth(df['minus_dm'].values, period)
-    df['plus_di'] = 100 * (df['plus_dm_s'] / df['tr_s'])
-    df['minus_di'] = 100 * (df['minus_dm_s'] / df['tr_s'])
-    df['dx'] = 100 * abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di'])
-    df['adx'] = wilders_smooth(df['dx'].fillna(0).values, period)
-    return float(df['adx'].iloc[-1])
+    tr_s, dm_ps, dm_ms = smooth(df['tr'].values, period), smooth(df['+dm'].values, period), smooth(df['-dm'].values, period)
+    di_p, di_m = 100 * (dm_ps / tr_s), 100 * (dm_ms / tr_s)
+    dx = 100 * abs(di_p - di_m) / (di_p + di_m)
+    adx = smooth(np.nan_to_num(dx), period)
+    return float(adx[-1])
 
 
-def determine_regime(data: Dict[str, dict], full_hist: Dict[str, pd.Series], timeframe: str, strict_data: bool) -> Tuple[str, str, List[str]]:
-    reasons: List[str] = []
-    missing_crit = [k for k in CRITICAL_KEYS if not data.get(k, {}).get("valid", False)]
-    if missing_crit:
-        reasons.append(f"Missing critical keys: {', '.join(missing_crit)}")
-        return "DATA ERROR", "NONE", reasons
+def determine_regime(data: Dict[str, dict], full_hist: Dict[str, pd.Series], timeframe: str, strict: bool) -> Tuple[str, str, List[str]]:
+    reasons = []
+    missing = [k for k in CRITICAL_KEYS if not data.get(k, {}).get("valid")]
+    if missing: return "DATA ERROR", "NONE", [f"Missing: {', '.join(missing)}"]
+    confidence = "LOW" if any(data[k].get("source") == "proxy" for k in CRITICAL_KEYS) else "HIGH"
+    if confidence == "LOW" and strict: return "DATA ERROR", "NONE", ["Strict mode: Proxies used."]
+    
+    def g(k): v = get_val(data, k, timeframe); return float(v) if np.isfinite(v) else 0.0
+    hyg, vix_chg, us10y, dxy, btc = g("HYG"), g("VIX"), g("US10Y"), g("DXY"), g("BTC")
+    vix_p = float(data.get("VIX", {}).get("price", 20.0))
+    
+    # Dynamic VIX Threshold
+    vix_s = full_hist.get("VIX")
+    v_thresh = 5.0
+    if vix_s is not None and len(vix_s) > 22:
+        v_thresh = max(5.0, 2.0 * (vix_s.pct_change() * 100).rolling(20).std().iloc[-1])
 
-    proxy_crit = [k for k in CRITICAL_KEYS if data.get(k, {}).get("source") == "proxy"]
-    if proxy_crit:
-        reasons.append(f"Proxy used for critical keys: {', '.join(proxy_crit)}")
-        if strict_data: return "DATA ERROR", "NONE", reasons
-        confidence = "LOW"
-    else: confidence = "HIGH"
-
-    def g(k: str) -> float:
-        v = get_val(data, k, timeframe)
-        return float(v) if np.isfinite(v) else 0.0
-
-    hyg, vix_chg = g("HYG"), g("VIX")
-    oil, cop, us10y, dxy, btc, banks = g("OIL"), g("COPPER"), g("US10Y"), g("DXY"), g("BTC"), g("BANKS")
-    vix_price = float(data.get("VIX", {}).get("price", 20.0))
-
-    vix_series = full_hist.get("VIX")
-    vix_threshold = 5.0
-    if vix_series is not None and len(vix_series) > 22:
-        vix_std = (vix_series.pct_change() * 100).rolling(20).std().iloc[-1]
-        vix_threshold = max(5.0, 2.0 * vix_std)
-
-    if hyg < -0.5 or vix_chg > vix_threshold: return "RISK OFF", confidence, reasons
-    if (oil > 1.5 or cop > 1.5) and us10y > 3.0 and banks > 0: return "REFLATION", confidence, reasons
+    if hyg < -0.5 or vix_chg > v_thresh: return "RISK OFF", confidence, reasons
     if dxy < -0.3 and btc > 1.5: return "LIQUIDITY", confidence, reasons
-    if (vix_chg < 0 or vix_price < 15.0) and abs(us10y) < 5.0 and hyg > -0.1: return "GOLDILOCKS", confidence, reasons
-
+    if (vix_chg < 0 or vix_p < 15.0) and abs(us10y) < 5.0 and hyg > -0.1: return "GOLDILOCKS", confidence, reasons
     return "NEUTRAL", confidence, reasons
 
 
@@ -607,86 +418,75 @@ def determine_regime(data: Dict[str, dict], full_hist: Dict[str, pd.Series], tim
 # ----------------------------
 
 def plot_nexus_graph_dots(data: Dict[str, dict], timeframe: str) -> go.Figure:
-    nodes = {
-        "US10Y": {"pos": (0, 0), "label": "Rates (^TNX)"}, "DXY": {"pos": (0.8, 0.8), "label": "Dollar (DXY)"},
-        "SPY": {"pos": (-0.8, 0.8), "label": "S&P 500 (SPY)"}, "QQQ": {"pos": (-1.2, 0.4), "label": "Nasdaq (QQQ)"},
-        "GOLD": {"pos": (0.8, -0.8), "label": "Gold (GLD)"}, "HYG": {"pos": (-0.4, -0.8), "label": "Credit (HYG)"},
-        "BTC": {"pos": (-1.5, 1.5), "label": "Bitcoin"}, "OIL": {"pos": (1.5, -0.4), "label": "Oil (USO)"},
-        "COPPER": {"pos": (1.2, -1.2), "label": "Copper"}, "IWM": {"pos": (-1.2, -1.0), "label": "Russell (IWM)"},
-        "SEMIS": {"pos": (-1.8, 0.8), "label": "Semis (SMH)"}, "ENERGY": {"pos": (1.8, -0.8), "label": "Energy (XLE)"},
-        "HOME": {"pos": (-0.8, -0.4), "label": "Housing (XHB)"}, "BANKS": {"pos": (1.5, -1.0), "label": "Banks (XLF)"},
-        "VIX": {"pos": (0, 1.5), "label": "Vol (^VIX)"},
-    }
-    edges = [("US10Y", "QQQ"), ("US10Y", "GOLD"), ("US10Y", "HOME"), ("DXY", "GOLD"), ("DXY", "OIL"), ("HYG", "SPY"), ("HYG", "IWM"), ("HYG", "BANKS"), ("QQQ", "BTC"), ("QQQ", "SEMIS"), ("COPPER", "US10Y"), ("OIL", "ENERGY"), ("VIX", "SPY")]
+    nodes = {"US10Y": (0,0), "DXY": (0.8,0.8), "SPY": (-0.8,0.8), "QQQ": (-1.2,0.4), "GOLD": (0.8,-0.8), "HYG": (-0.4,-0.8), "BTC": (-1.5,1.5), "VIX": (0,1.5)}
+    edges = [("US10Y", "QQQ"), ("US10Y", "GOLD"), ("HYG", "SPY"), ("DXY", "GOLD"), ("VIX", "SPY")]
     edge_x, edge_y = [], []
     for u, v in edges:
-        x0, y0 = nodes[u]["pos"]
-        x1, y1 = nodes[v]["pos"]
-        edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
-    node_x, node_y, node_text, hover_text, node_color, node_size, node_symbol = [], [], [], [], [], [], []
-    for key, info in nodes.items():
-        node_x.append(info["pos"][0]); node_y.append(info["pos"][1])
-        d = data.get(key, {}); valid = d.get("valid", False); val = get_val(data, key, timeframe)
-        if not valid or not np.isfinite(val): col, sym, fmt_val = "#6b7280", "circle-open", "N/A"
-        else:
-            col = "#22c55e" if val > 0 else "#ef4444" if val < 0 else "#6b7280"
-            sym = "circle"; fmt_val = f"{val:+.2f}%" if key != "US10Y" else f"{val:+.1f} bps"
-        node_color.append(col); node_symbol.append(sym); node_size.append(45 if key in CRITICAL_KEYS else 35)
-        node_text.append(info["label"].split("(")[0].strip())
-        hover_text.append(f"{info['label']}<br>Change: {fmt_val}<br>Source: {d.get('source')} ({d.get('symbol_used')})")
+        edge_x.extend([nodes[u][0], nodes[v][0], None]); edge_y.extend([nodes[u][1], nodes[v][1], None])
+    nx, ny, nt, nc = [], [], [], []
+    for k, p in nodes.items():
+        nx.append(p[0]); ny.append(p[1]); nt.append(k)
+        v = get_val(data, k, timeframe)
+        nc.append("#22c55e" if v > 0 else "#ef4444" if v < 0 else "#6b7280")
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=edge_x, y=edge_y, mode="lines", line=dict(width=1, color="#4b5563"), hoverinfo="none"))
-    fig.add_trace(go.Scatter(x=node_x, y=node_y, mode="markers+text", text=node_text, textposition="bottom center", hovertext=hover_text, hoverinfo="text", marker=dict(size=node_size, color=node_color, symbol=node_symbol, line=dict(width=2, color="white")), textfont=dict(size=11, color="white")))
-    fig.update_layout(showlegend=False, margin=dict(b=0, l=0, r=0, t=0), xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.5, 2.5]), yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-2.0, 2.0]), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=500)
+    fig.add_trace(go.Scatter(x=nx, y=ny, mode="markers+text", text=nt, marker=dict(size=40, color=nc, line=dict(width=2, color="white")), textfont=dict(color="white")))
+    fig.update_layout(showlegend=False, margin=dict(b=0,l=0,r=0,t=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=500, xaxis=dict(visible=False), yaxis=dict(visible=False))
     return fig
 
 
-def _sankey_from_values(title: str, values: Dict[str, float], color_rgba: str) -> go.Figure:
+def _sankey_from_values(title: str, values: Dict[str, float], color: str) -> go.Figure:
     clean = {k: v for k, v in values.items() if np.isfinite(v)}
-    if len(clean) < 4:
-        fig = go.Figure(); fig.add_annotation(text="Insufficient data", showarrow=False); return fig
+    if len(clean) < 4: return go.Figure().add_annotation(text="No Data", showarrow=False)
     df = pd.DataFrame(list(clean.items()), columns=["id", "val"]).sort_values("val", ascending=False)
-    winners, losers = df.head(3), df.tail(3)
-    labels = list(losers["id"]) + list(winners["id"])
-    sources, targets, link_values, colors = [], [], [], []
-    for i in range(len(losers)):
-        for j in range(len(winners)):
-            sources.append(i); targets.append(len(losers) + j)
-            link_values.append(float(abs(losers.iloc[i]["val"]) + abs(winners.iloc[j]["val"])))
-            colors.append(color_rgba)
-    fig = go.Figure(data=[go.Sankey(node=dict(pad=15, thickness=20, label=labels, color=["#ef4444"]*3 + ["#22c55e"]*3), link=dict(source=sources, target=targets, value=link_values, color=colors))])
+    win, los = df.head(3), df.tail(3)
+    labs = list(los["id"]) + list(win["id"])
+    src, tgt, vals = [], [], []
+    for i in range(len(los)):
+        for j in range(len(win)):
+            src.append(i); tgt.append(len(los)+j); vals.append(abs(los.iloc[i]["val"]) + abs(win.iloc[j]["val"]))
+    fig = go.Figure(data=[go.Sankey(node=dict(pad=15, thickness=20, label=labs, color=["#ef4444"]*3 + ["#22c55e"]*3), link=dict(source=src, target=tgt, value=vals, color=color))])
     fig.update_layout(title_text=title, font=dict(color="white"), paper_bgcolor="rgba(0,0,0,0)", height=350)
     return fig
 
+# RESTORED: Wrapper functions for Sankey
+def plot_sankey_sectors(data, timeframe):
+    keys = ["TECH", "SEMIS", "BANKS", "ENERGY", "HOME", "UTIL", "HEALTH", "MAT", "COMM"]
+    vals = {k: get_val(data, k, timeframe) for k in keys}
+    return _sankey_from_values(f"Sector Rotation ({timeframe})", vals, "rgba(59, 130, 246, 0.2)")
 
-def plot_trend_momentum_quadrant(full_hist: Dict[str, pd.Series], category: str, timeframe: str, relative: bool = False) -> go.Figure:
-    keys = ["TECH", "SEMIS", "BANKS", "ENERGY", "HOME", "UTIL", "STAPLES", "DISC", "IND", "HEALTH", "MAT", "COMM", "RE"] if category == "SECTORS" else ["SPY", "QQQ", "IWM", "GOLD", "BTC", "TLT", "DXY", "HYG", "OIL"]
+def plot_sankey_assets(data, timeframe):
+    keys = ["SPY", "TLT", "DXY", "GOLD", "BTC", "OIL", "HYG"]
+    vals = {k: get_val(data, k, timeframe) for k in keys}
+    return _sankey_from_values(f"Asset Rotation ({timeframe})", vals, "rgba(168, 85, 247, 0.2)")
+
+
+def plot_trend_momentum_quadrant(full_hist, category, timeframe, relative=False):
+    keys = ["TECH", "SEMIS", "BANKS", "ENERGY", "HOME"] if category == "SECTORS" else ["SPY", "QQQ", "IWM", "GOLD", "BTC", "TLT"]
     tw, mw = (20, 5) if timeframe == "Tactical (Daily)" else (100, 25)
-    spy_s = full_hist.get("SPY")
-    items = []
+    spy_s, items = full_hist.get("SPY"), []
     for k in keys:
         s = full_hist.get(k)
         if s is None or len(s) < (tw + mw + 5): continue
         if relative and spy_s is not None:
             cidx = s.index.intersection(spy_s.index)
             s = s.loc[cidx] / spy_s.loc[cidx]
-        curr = float(s.iloc[-1]); sma = float(s.rolling(window=tw).mean().iloc[-1])
-        if sma == 0 or not np.isfinite(sma): continue
+        curr, sma = float(s.iloc[-1]), float(s.rolling(tw).mean().iloc[-1])
+        if sma == 0: continue
         ts = ((curr / sma) - 1.0) * 100.0; pm = float(s.iloc[-(mw + 1)]); ms = (((curr / pm) - 1.0) * 100.0) if pm != 0 else 0.0
         c = "#22c55e" if ts > 0 and ms > 0 else "#3b82f6" if ts < 0 and ms > 0 else "#f59e0b" if ts > 0 and ms < 0 else "#ef4444"
         items.append({"Symbol": k, "Trend": ts, "Momentum": ms, "Color": c})
     df = pd.DataFrame(items)
     if df.empty: return go.Figure()
     fig = px.scatter(df, x="Trend", y="Momentum", text="Symbol", color="Color", color_discrete_map="identity")
-    fig.update_traces(textposition="top center", marker=dict(size=14, line=dict(width=1, color="white")))
-    fig.add_hline(y=0, line_dash="dot"); fig.add_vline(x=0, line_dash="dot")
     lim = max(float(df["Trend"].abs().max()), float(df["Momentum"].abs().max())) * 1.1
     fig.update_layout(xaxis=dict(range=[-lim, lim]), yaxis=dict(range=[-lim, lim]), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#ccc"), showlegend=False, height=450)
+    fig.add_hline(y=0, line_dash="dot"); fig.add_vline(x=0, line_dash="dot")
     return fig
 
 
-def plot_correlation_heatmap(history_df: pd.DataFrame, timeframe: str) -> go.Figure:
-    if history_df is None or history_df.empty: return go.Figure()
+def plot_correlation_heatmap(history_df, timeframe):
+    if history_df.empty: return go.Figure()
     df = history_df.dropna(how='all').ffill(limit=2)
     if timeframe != "Tactical (Daily)": df = df.resample("W-FRI").last().dropna(how='all')
     corr = df.pct_change().corr()
@@ -701,45 +501,37 @@ def plot_correlation_heatmap(history_df: pd.DataFrame, timeframe: str) -> go.Fig
 # 10) MAIN APP
 # ----------------------------
 
-def main() -> None:
+def main():
     st.title(APP_VERSION)
     with st.sidebar:
         st.subheader("Data Controls")
-        strict_data = st.checkbox("Strict mode (no proxies for critical keys)", value=False)
-        st.divider()
-        st.write("- Weekly view is WTD vs last Friday close.")
-        st.info("**Color Logic:** Drivers (VIX, Rates, DXY) are Red if rising (Risk Off impact).")
+        strict = st.checkbox("Strict mode", value=False)
+        st.divider(); st.write("- Weekly: WTD vs last Friday."); st.info("Drivers Red if rising (Risk Off).")
 
     with st.spinner("Connecting to MacroNexus Core..."):
         market_data, history_df, full_hist, health = fetch_market_data()
 
-    if datetime.datetime.utcnow().weekday() >= 5:
-        st.info("📅 **Weekend Mode Active:** Data reflects Friday's market close.")
+    if datetime.datetime.utcnow().weekday() >= 5: st.info("📅 Weekend Mode Active.")
+    if [k for k in CRITICAL_KEYS if health.proxy_used.get(k)]: st.warning("⚠️ Proxies active for Critical Keys.")
 
-    crit_proxies = [k for k in CRITICAL_KEYS if health.proxy_used.get(k)]
-    if crit_proxies: st.warning(f"⚠️ **DATA INTEGRITY WARNING:** Proxies active for: {', '.join(crit_proxies)}.")
-
-    # Health & Metrics UI...
+    # Metric Row
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     def metric_tile(col, label, key):
         d = market_data.get(key, {})
-        if not d.get("valid"):
-            col.markdown(f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">--</div></div>', unsafe_allow_html=True); return
+        if not d.get("valid"): col.markdown(f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">--</div></div>', unsafe_allow_html=True); return
         val, chg = d.get("price", 0.0), d.get("change", 0.0)
-        is_up = chg > 0
-        color = ("#F43F5E" if is_up else "#10B981") if key in ["US10Y", "DXY", "VIX"] else ("#10B981" if is_up else "#F43F5E")
-        val_str = f"{val:.2f}%" if key == "US10Y" else f"{val:.2f}"
-        fchg = f"{chg:+.1f} bps" if key == "US10Y" else f"{chg:+.2f}%"
-        col.markdown(f'<div class="metric-card" style="border-left: 3px solid {color};"><div class="metric-label">{label}{" (proxy)" if d.get("source")=="proxy" else ""}</div><div class="metric-value">{val_str}<span class="metric-delta" style="color: {color};">{fchg}</span></div></div>', unsafe_allow_html=True)
+        color = ("#F43F5E" if chg > 0 else "#10B981") if key in ["US10Y", "DXY", "VIX"] else ("#10B981" if chg > 0 else "#F43F5E")
+        vs, cs = (f"{val:.2f}%", f"{chg:+.1f} bps") if key == "US10Y" else (f"{val:.2f}", f"{chg:+.2f}%")
+        col.markdown(f'<div class="metric-card" style="border-left: 3px solid {color};"><div class="metric-label">{label}{" (proxy)" if d.get("source")=="proxy" else ""}</div><div class="metric-value">{vs}<span class="metric-delta" style="color:{color};">{cs}</span></div></div>', unsafe_allow_html=True)
     metric_tile(c1, "Credit (HYG)", "HYG"); metric_tile(c2, "Volatility (VIX)", "VIX"); metric_tile(c3, "10Y Yield", "US10Y"); metric_tile(c4, "Dollar (DXY)", "DXY"); metric_tile(c5, "Oil", "OIL"); metric_tile(c6, "Bitcoin", "BTC")
 
     ctrl1, ctrl2, ctrl3 = st.columns([1, 1, 2])
     with ctrl2: timeframe = st.selectbox("Analytic View", TIMEFRAMES, index=0, label_visibility="collapsed")
-    regime, confidence, regime_reasons = determine_regime(market_data, full_hist, timeframe, strict_data)
+    regime, conf, reasons = determine_regime(market_data, full_hist, timeframe, strict)
     with ctrl1: active_regime = st.selectbox("Force Regime", list(STRATEGIES.keys()), label_visibility="collapsed") if st.checkbox("Manual Override", value=False) else regime
     with ctrl3:
-        rc = {"GOLDILOCKS": "#10B981", "LIQUIDITY": "#A855F7", "REFLATION": "#F59E0B", "NEUTRAL": "#6B7280", "RISK OFF": "#EF4444", "DATA ERROR": "#EF4444"}.get(active_regime, "#6B7280")
-        st.markdown(f'<div style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 15px;"><div style="text-align: right;"><div style="font-size: 10px; color: #8B9BB4;">SYSTEM STATUS</div><div style="font-size: 14px; font-weight: bold; color: {rc};">{"LOW CONF" if confidence=="LOW" else "ACTIVE"}</div></div><div class="regime-badge" style="background: {rc}22; color: {rc}; border: 1px solid {rc};">{active_regime}</div></div>', unsafe_allow_html=True)
+        rc = {"GOLDILOCKS": "#10B981", "LIQUIDITY": "#A855F7", "REFLATION": "#F59E0B", "NEUTRAL": "#6B7280", "RISK OFF": "#EF4444"}.get(active_regime, "#6B7280")
+        st.markdown(f'<div style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 15px;"><div style="text-align: right;"><div style="font-size: 10px; color: #8B9BB4;">SYSTEM STATUS</div><div style="font-size: 14px; font-weight: bold; color: {rc};">{"LOW CONF" if conf=="LOW" else "ACTIVE"}</div></div><div class="regime-badge" style="background: {rc}22; color: {rc}; border: 1px solid {rc};">{active_regime}</div></div>', unsafe_allow_html=True)
 
     tab_mission, tab_matrix, tab_workflow, tab_pulse, tab_macro, tab_playbook = st.tabs(["🚀 MISSION CONTROL", "🚦 DECISION MATRIX", "📋 WORKFLOW", "📊 MARKET PULSE", "🕸️ MACRO MACHINE", "📖 STRATEGY PLAYBOOK"])
 
@@ -753,20 +545,16 @@ def main() -> None:
             tc4.metric("ADX (Auto, SPY 14)", f"{adx_val:.1f}")
         
         strat_data = STRATEGIES.get(active_regime, STRATEGIES["NEUTRAL"])
-        if active_regime == "DATA ERROR": reactor_output = strat_data["index"]
-        elif asset_mode == "STOCKS": reactor_output = strat_data["stock"]
+        if active_regime == "DATA ERROR": reactor = strat_data["index"]
+        elif asset_mode == "STOCKS": reactor = strat_data["stock"]
         else:
-            if active_regime == "RISK OFF": reactor_output = STRATEGIES["RISK OFF"]["index"]
-            elif iv_rank > 50:
-                if skew_rank > 80: reactor_output = {"strat": "Put BWB (High Skew)", "dte": "21-30 DTE", "setup": "Long ATM / Short -40 / Skip / Long -60", "notes": "Crash risk elevated. Use BWB to eliminate upside risk."}
-                else: reactor_output = {"strat": "Iron Condor", "dte": "30-45 DTE", "setup": "Delta 15 Wings", "notes": "Volatility is high. Mean reversion income."}
-            else:
-                if adx_val > 25: reactor_output = STRATEGIES["LIQUIDITY"]["index"] if active_regime=="LIQUIDITY" else {"strat": "Directional Diagonal", "dte": "Front 17 / Back 31", "setup": "Buy Back ITM / Sell Front OTM", "notes": "Trend detected. Avoid capping upside."}
-                else: reactor_output = STRATEGIES["NEUTRAL"]["index"]
+            if active_regime == "RISK OFF": reactor = STRATEGIES["RISK OFF"]["index"]
+            elif iv_rank > 50: reactor = {"strat": "Put BWB (High Skew)", "dte": "21-30 DTE", "setup": "Long ATM / Short -40 / Long -60", "notes": "Crash risk."} if skew_rank > 80 else {"strat": "Iron Condor", "dte": "30-45 DTE", "setup": "Delta 15 Wings", "notes": "High IV."}
+            else: reactor = STRATEGIES["LIQUIDITY"]["index"] if active_regime=="LIQUIDITY" else {"strat": "Directional Diagonal", "dte": "Front 17 / Back 31", "setup": "Buy Back ITM / Sell Front OTM", "notes": "Trend."} if adx_val > 25 else STRATEGIES["NEUTRAL"]["index"]
 
         col_L, col_R = st.columns([1, 2])
         with col_L: st.markdown(f'<div class="strat-card"><div class="strat-header"><div class="strat-title" style="color: {rc}">CONTEXT</div><div class="strat-tag" style="background: {rc}22; color: {rc}">{active_regime}</div></div><div class="strat-section"><div class="strat-subtitle">DESCRIPTION</div><div class="strat-data">{strat_data["desc"]}</div></div><div class="strat-section"><div class="strat-subtitle">RISK SIZE</div><div class="strat-data" style="font-size: 24px; color: {rc}">{strat_data["risk"]}</div></div><div class="strat-section"><div class="strat-subtitle">BIAS</div><div class="strat-data">{strat_data["bias"]}</div></div><div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);"><div style="margin-bottom: 8px;"><span class="badge-green">TARGETS</span> <span style="font-size: 13px;">{strat_data.get("longs")}</span></div><div><span class="badge-red">AVOID</span> <span style="font-size: 13px;">{strat_data.get("shorts")}</span></div></div></div>', unsafe_allow_html=True)
-        with col_R: st.markdown(f'<div class="strat-card" style="border-color: {rc};"><div class="strat-header"><div class="strat-title" style="color: {rc};">TACTICAL EXECUTION</div></div><div style="font-size: 28px; font-weight: 800; margin-bottom: 20px; color: #FFF;">{reactor_output["strat"]}</div><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 25px;"><div><div class="strat-subtitle">⏱️ TIMING (DTE)</div><div class="strat-data" style="font-weight: 700; font-size: 18px;">{reactor_output["dte"]}</div></div><div><div class="strat-subtitle">🏗️ STRUCTURE</div><div class="strat-data" style="font-weight: 700; font-size: 18px;">{reactor_output["setup"]}</div></div></div><div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; border-left: 4px solid {rc}; margin-bottom: 20px;"><div class="strat-subtitle" style="margin-top: 0; color: {rc};">🧠 THE LOGIC</div><div class="strat-data" style="font-size: 14px; color: #E5E7EB; font-style: italic;">"{reactor_output["notes"]}"</div></div></div>', unsafe_allow_html=True)
+        with col_R: st.markdown(f'<div class="strat-card" style="border-color: {rc};"><div class="strat-header"><div class="strat-title" style="color: {rc};">TACTICAL EXECUTION</div></div><div style="font-size: 28px; font-weight: 800; margin-bottom: 20px; color: #FFF;">{reactor["strat"]}</div><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 25px;"><div><div class="strat-subtitle">⏱️ TIMING (DTE)</div><div class="strat-data" style="font-weight: 700; font-size: 18px;">{reactor["dte"]}</div></div><div><div class="strat-subtitle">🏗️ STRUCTURE</div><div class="strat-data" style="font-weight: 700; font-size: 18px;">{reactor["setup"]}</div></div></div><div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; border-left: 4px solid {rc}; margin-bottom: 20px;"><div class="strat-subtitle" style="margin-top: 0; color: {rc};">🧠 THE LOGIC</div><div class="strat-data" style="font-size: 14px; color: #E5E7EB; font-style: italic;">"{reactor["notes"]}"</div></div></div>', unsafe_allow_html=True)
 
     with tab_matrix:
         st.subheader(f"🚦 Decision Matrix: {active_regime}")
@@ -775,37 +563,34 @@ def main() -> None:
     with tab_workflow:
         st.subheader("📋 The 5-Phase Mission Control Workflow")
         w1, w2, w3, w4, w5 = st.columns(5)
-        w1.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #F87171; font-weight: bold; margin-bottom: 10px;">PHASE 1: VETO</div><div style="font-size: 12px; color: #AAA;">1. Check <b>HYG</b> (Credit). Is it crashing (&lt; -0.5%)?<br>2. Check <b>VIX</b>. Is it spiking (&gt; 5%)?<br><br><span style="color: #F87171;">If YES: STOP. Go to Risk Off.</span></div></div>""", unsafe_allow_html=True)
-        w2.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #FBBF24; font-weight: bold; margin-bottom: 10px;">PHASE 2: REGIME</div><div style="font-size: 12px; color: #AAA;">Identify the "Tailwind".<br>• <b>Goldilocks:</b> Growth + Low Vol<br>• <b>Liquidity:</b> DXY Down + Crypto Up<br>• <b>Reflation:</b> Yields + Oil Up</div></div>""", unsafe_allow_html=True)
-        w3.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #60A5FA; font-weight: bold; margin-bottom: 10px;">PHASE 3: SECTOR</div><div style="font-size: 12px; color: #AAA;">Use the Quadrant & Sankey charts.<br>• Find sectors moving from <b>Improving</b> to <b>Leading</b>.<br>• Confirm flows match Regime.</div></div>""", unsafe_allow_html=True)
-        w4.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #A78BFA; font-weight: bold; margin-bottom: 10px;">PHASE 4: TACTICS</div><div style="font-size: 12px; color: #AAA;">Consult the <b>SPX Reactor</b>.<br>• <b>Vol Check:</b> IV Rank &gt; 50?<br>• <b>Skew Check:</b> Crash risk?<br>• <b>Trend Check:</b> ADX &gt; 25?</div></div>""", unsafe_allow_html=True)
-        w5.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #34D399; font-weight: bold; margin-bottom: 10px;">PHASE 5: EXECUTE</div><div style="font-size: 12px; color: #AAA;">3:00 PM EST Check.<br>• Confirm price action.<br>• Verify DTE matches plan.<br>• <b>Enter trade.</b></div></div>""", unsafe_allow_html=True)
+        w1.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #F87171; font-weight: bold; margin-bottom: 10px;">PHASE 1: VETO</div><div style="font-size: 12px; color: #AAA;">1. Check <b>HYG</b>. Is it crashing (&lt; -0.5%)?<br>2. Check <b>VIX</b>. Is it spiking (&gt; 5%)?<br><br><span style="color: #F87171;">If YES: STOP. Go to Risk Off.</span></div></div>""", unsafe_allow_html=True)
+        w2.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #FBBF24; font-weight: bold; margin-bottom: 10px;">PHASE 2: REGIME</div><div style="font-size: 12px; color: #AAA;">Identify the "Tailwind".<br>• <b>Goldilocks</b><br>• <b>Liquidity</b><br>• <b>Reflation</b></div></div>""", unsafe_allow_html=True)
+        w3.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #60A5FA; font-weight: bold; margin-bottom: 10px;">PHASE 3: SECTOR</div><div style="font-size: 12px; color: #AAA;">Find sectors moving from <b>Improving</b> to <b>Leading</b>.</div></div>""", unsafe_allow_html=True)
+        w4.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #A78BFA; font-weight: bold; margin-bottom: 10px;">PHASE 4: TACTICS</div><div style="font-size: 12px; color: #AAA;">Consult <b>SPX Reactor</b>.</div></div>""", unsafe_allow_html=True)
+        w5.markdown("""<div class="metric-card" style="height: 250px;"><div style="color: #34D399; font-weight: bold; margin-bottom: 10px;">PHASE 5: EXECUTE</div><div style="font-size: 12px; color: #AAA;">3:00 PM EST Check. Confirm action. Enter trade.</div></div>""", unsafe_allow_html=True)
 
     with tab_pulse:
         st.subheader("🌊 Capital Flow")
         ps1, ps2 = st.columns([3, 1])
         with ps1: st.plotly_chart(plot_sankey_sectors(market_data, timeframe), use_container_width=True)
-        with ps2: st.markdown('<div class="context-box"><div class="context-header">How to Read</div>Sankey diagrams visualize rotation from losers (left) to winners (right).<br><br><div class="context-header">Analyst Note</div>If defensives are consistently on the right, risk appetite is deteriorating.</div>', unsafe_allow_html=True)
+        with ps2: st.markdown('<div class="context-box"><div class="context-header">How to Read</div>Rotation from losers (left) to winners (right).</div>', unsafe_allow_html=True)
         st.plotly_chart(plot_sankey_assets(market_data, timeframe), use_container_width=True)
         st.plotly_chart(plot_correlation_heatmap(history_df, timeframe), use_container_width=True)
-        is_rrg = st.toggle("RRG Mode (vs SPY)", value=False)
+        is_rrg = st.toggle("RRG Mode", value=False)
         q1, q2 = st.columns(2)
         with q1: st.plotly_chart(plot_trend_momentum_quadrant(full_hist, "SECTORS", timeframe, is_rrg), use_container_width=True)
         with q2: st.plotly_chart(plot_trend_momentum_quadrant(full_hist, "ASSETS", timeframe, is_rrg), use_container_width=True)
-        st.markdown('<div class="context-box"><div class="context-header">How to Read (RRG)</div><b>Top-Right (Green): LEADING</b> Strong trend + momentum.<br><b>Bottom-Left (Red): LAGGING</b> Weak trend + momentum.</div>', unsafe_allow_html=True)
 
     with tab_macro:
         st.subheader("🕸️ The Macro Machine")
         mg1, mg2 = st.columns([3, 1])
         with mg1: st.plotly_chart(plot_nexus_graph_dots(market_data, timeframe), use_container_width=True)
-        with mg2: st.markdown(f'<div class="context-box"><div class="context-header">The Plumbing</div>Fixed layout showing macro linkages. Node color uses {timeframe}.<br><br><div class="context-header">Key Correlations</div>• <b>Rates ➔ Tech:</b> Rising rates hurt long-duration growth.<br>• <b>Credit ➔ Equities:</b> If HYG cracks, SPY follows.</div>', unsafe_allow_html=True)
+        with mg2: st.markdown('<div class="context-box"><div class="context-header">The Plumbing</div>Fixed linkages. Node color uses performance.</div>', unsafe_allow_html=True)
 
     with tab_playbook:
         st.subheader("📚 Strategy Playbook")
-        with st.expander("🔴 A14 (Crash Protection)"): st.markdown("""### A14: The "Anti-Fragile" Hedge\n**Concept:** Financing downside protection using OTM puts, creating a "free" crash catcher.\n\n**1. Setup (Put Broken Wing Butterfly)**\n- **Long:** 1x ATM Put\n- **Short:** 2x OTM Puts (-40 pts)\n- **Long:** 1x OTM Put (-60 pts)\n\n**2. Entry**\n- **Time:** Friday morning\n- **DTE:** 14 days\n- **Target:** Net credit or tiny debit.\n\n**3. Management**\n- **Exit:** Hard stop at 7 DTE.""")
-        with st.expander("🟣 TIMEZONE (RUT Income)"): st.markdown("""### TimeZone: High Prob RUT Income\n**Concept:** Harvest theta on Russell using a hedged structure.\n\n**1. Structure**\n- Leg A: Put credit spread (sell 14D / buy 5D)\n- Leg B: Put calendar (sell 15D / buy 45D same strike)\n\n**2. Management**\n- Profit target: 5–7%\n- Hard stop: exit at 7 DTE.""")
-        with st.expander("🔵 TIMEEDGE (SPX Neutral)"): st.markdown("""### TimeEdge: Pure Theta Decay\n**Concept:** Exploit decay differential in SPX.\n\n**Structure**\n- Double calendar: sell 15 DTE / buy 43 DTE\n- Profit target: 10%\n- Stop loss: 10%""")
-        with st.expander("🌊 FLYAGONAL (Liquidity Drift)"): st.markdown("""### Flyagonal: The Drift Catcher\n**Concept:** Capture melt-up drift higher.\n\n**Structure**\n- Upside: call broken-wing butterfly (+10 / -50 / +60 width)\n- Downside: put diagonal (sell front OTM / buy back OTM)""")
+        with st.expander("🔴 A14 (Crash Protection)"): st.markdown("""### A14: The "Anti-Fragile" Hedge\n- **Structure:** 14 DTE Put BWB\n- **Logic:** Zero upside risk; profit tent expands into crash.""")
+        with st.expander("🟣 TIMEZONE (RUT Income)"): st.markdown("""### TimeZone: High Prob RUT Income\n- **Logic:** Harvest theta on Russell using a hedged calendar structure.""")
 
 
 if __name__ == "__main__":
